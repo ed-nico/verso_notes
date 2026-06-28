@@ -24,6 +24,7 @@ Everything is local. Per-vault data (like saved Bases) lives inside the vault it
 
 <img width="2312" height="2004" alt="CleanShot 2026-06-27 at 07 14 36@2x" src="https://github.com/user-attachments/assets/0726cf8f-f039-4818-be0b-561343515ca9" />
 <img width="2794" height="1836" alt="CleanShot 2026-06-27 at 08 24 34@2x" src="https://github.com/user-attachments/assets/12e2dd83-c1f2-4699-b921-babb933ff84e" />
+<img width="1710" height="1368" alt="image" src="https://github.com/user-attachments/assets/cb1b2145-67d2-4396-9e69-57a3bb8ba6c9" />
 
 ## Philosophy
 
