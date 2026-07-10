@@ -92,6 +92,14 @@ our word for it: it's all in this repo.
 
 Verso is in active development (currently `v0.1.x`) and pre-1.0 — expect rough edges and the occasional breaking change. Issues and ideas welcome.
 
+## Built with AI
+
+In the spirit of full transparency: this app was largely written with AI assistance
+(Claude). I use Verso daily as my own notes app and it works well for my needs — but
+treat a young 0.x release accordingly: keep backups of your vault (your notes are
+plain Markdown files, so any backup or sync tool works), and review the code at
+your free will — it's all here.
+
 <img width="2302" height="1962" alt="CleanShot 2026-06-27 at 07 15 01@2x" src="https://github.com/user-attachments/assets/02836a55-1fdc-466a-90dc-6f68a1273032" />
 
 No Mobile yet.
