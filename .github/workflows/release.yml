@@ -24,7 +24,9 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npx electron-vite build
-      - run: npx electron-builder --mac --linux --win
+      # --publish never: in CI-with-tag electron-builder defaults to publishing
+      # itself (and wants GH_TOKEN); the gh-release step below does the upload.
+      - run: npx electron-builder --mac --linux --win --publish never
       - uses: softprops/action-gh-release@v2
         with:
           files: |
