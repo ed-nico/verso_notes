@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+*.log
+*.tsbuildinfo
+.DS_Store
+.claude/
+test-vault/
+# Heavy social-media images (not referenced by the app or README)
+branding/x-*.png
+branding/x-*.svg

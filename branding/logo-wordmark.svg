@@ -1,0 +1,29 @@
+<svg width="1280" height="380" viewBox="0 0 1280 380" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="stroke" x1="0.2" y1="0" x2="0.8" y2="1">
+      <stop offset="0" stop-color="#9fb0ff"/>
+      <stop offset="0.55" stop-color="#7c8cff"/>
+      <stop offset="1" stop-color="#6fcaa8"/>
+    </linearGradient>
+    <linearGradient id="word" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ececf4"/>
+      <stop offset="1" stop-color="#c7c9e6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- mark -->
+  <g transform="translate(40,72) scale(0.45)">
+    <rect x="0" y="0" width="512" height="512" rx="116" fill="#1f1f25"/>
+    <rect x="1.5" y="1.5" width="509" height="509" rx="115" fill="none" stroke="#3a3a45" stroke-width="2.5"/>
+    <g fill="none" stroke="url(#stroke)" stroke-width="44" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M 150 168 L 256 350 L 362 168"/>
+    </g>
+    <circle cx="150" cy="168" r="40" fill="#9fb0ff"/>
+    <circle cx="362" cy="168" r="40" fill="#8fa1ff"/>
+    <circle cx="256" cy="350" r="44" fill="#6fcaa8"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="320" y="248" font-family="'SF Pro Display','Helvetica Neue',Arial,sans-serif"
+        font-size="210" font-weight="600" letter-spacing="-6" fill="url(#word)">Verso</text>
+</svg>

@@ -1,0 +1,41 @@
+appId: com.verso.app
+productName: Verso
+directories:
+  output: dist
+  buildResources: build
+# All dependencies are pure JS (chokidar v4, pdfjs, js-yaml) — no native rebuilds,
+# so this cross-builds a Linux x64 AppImage cleanly from macOS.
+files:
+  - out/**/*
+  - package.json
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  category: public.app-category.productivity
+  # No Apple Developer ID — ad-hoc sign so it runs locally on Apple Silicon
+  # (a locally-built app isn't quarantined, so Gatekeeper won't block it).
+  identity: null
+  hardenedRuntime: false
+  artifactName: ${productName}-${version}-${arch}.${ext}
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  category: Office
+  executableName: verso
+  synopsis: A local-first Markdown notebook — a mesh of Obsidian and Logseq
+  syncDesktopName: true
+  artifactName: ${productName}-${version}-${arch}.${ext}
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # Unsigned — Windows shows a one-time SmartScreen "unrecognized app" screen.
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
+nsis:
+  oneClick: true
+  deleteAppDataOnUninstall: false
