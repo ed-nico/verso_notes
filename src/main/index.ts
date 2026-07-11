@@ -47,7 +47,8 @@ function prefsPath(): string {
   return path.join(app.getPath('userData'), 'verso-prefs.json')
 }
 
-/** One-time migration: before 0.2 the prefs file used the old internal codename. */
+/** One-time migration: releases before 0.2 named the prefs file after the project's
+ *  pre-release codename. */
 async function migrateLegacyPrefs(): Promise<void> {
   try {
     const legacy = path.join(app.getPath('userData'), 'inkwell-prefs.json')

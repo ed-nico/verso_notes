@@ -24,14 +24,6 @@ npm test           # vitest over the parsing/indexing libs (src/**/*.test.ts)
 
 TypeScript is `strict`. CI runs typecheck + tests + a production build on every PR.
 
-## A note on naming
-
-Everything is **verso**: the preload bridge is `window.verso` (typed `VersoApi`),
-the asset protocol is `verso://`, and prefs live in `verso-prefs.json`. The project's
-original codename was "inkwell"; two small one-time migrations (prefs-file rename in
-`src/main/index.ts`, `inkwell-*` → `verso-*` localStorage rename in `store.ts`) keep
-installs from that era working — please don't remove them.
-
 ## Architecture in one paragraph
 
 Three Electron contexts: the renderer (React, `src/renderer/`) **never touches the

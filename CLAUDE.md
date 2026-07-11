@@ -12,11 +12,10 @@ with autocomplete, backlinks + unlinked references, a force-directed graph, Obsi
 PDF annotator.
 
 **Naming note:** everything is **verso** — the preload bridge is `window.verso` (typed
-`VersoApi`), the asset protocol is `verso://`, prefs live in `verso-prefs.json`. The
-project's original codename was "inkwell"; two one-time migrations cover installs from
-that era (the prefs-file rename in `main/index.ts`, the `inkwell-*` → `verso-*`
-localStorage rename at the top of `store.ts`) — don't remove them, and don't
-reintroduce the old name.
+`VersoApi`), the asset protocol is `verso://`, prefs live in `verso-prefs.json`. Two
+one-time migrations rename persisted data from the project's pre-release codename (the
+prefs-file rename in `main/index.ts`, the localStorage key rename at the top of
+`store.ts`) — don't remove them, and don't reintroduce that codename anywhere.
 
 ## Commands
 

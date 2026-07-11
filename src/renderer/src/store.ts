@@ -20,8 +20,8 @@ import {
   type FieldDef
 } from './lib/supertags'
 
-// One-time migration: before 0.2, localStorage keys used the old internal codename
-// ("inkwell-*"). Must run before the store's initial state reads any of them.
+// One-time migration: releases before 0.2 persisted these keys under the project's
+// pre-release codename. Must run before the store's initial state reads any of them.
 if (typeof localStorage !== 'undefined') {
   for (const k of Object.keys(localStorage)) {
     if (!k.startsWith('inkwell-')) continue
