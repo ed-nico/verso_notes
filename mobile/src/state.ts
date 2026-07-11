@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { NoteFile } from '@shared/types'
-import { makeVaultFS, isNative, type VaultFS } from './fs'
+import { makeVaultFS, isNative, normalizeRoot, type VaultFS } from './fs'
 import { dailyPath, todayISO } from '@vlib/dates'
 
 /** Default vault location on the phone — a folder your sync tool fills. */
@@ -36,7 +36,8 @@ export const useApp = create<MobileState>((set, get) => ({
   editing: false,
   error: null,
 
-  openVault: async (root) => {
+  openVault: async (raw) => {
+    const root = normalizeRoot(raw)
     const fs = makeVaultFS(root)
     try {
       const files = await fs.list()

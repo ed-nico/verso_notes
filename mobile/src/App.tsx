@@ -3,6 +3,7 @@ import { App as CapApp } from '@capacitor/app'
 import { parseBlocks, serializeBlocks, isList, type Block } from '@vlib/blocks'
 import { resolveTarget, pathForNewNote, dirname } from '@vlib/links'
 import { useApp, isNative, DEFAULT_ROOT } from './state'
+import { FolderPicker } from './fs'
 import { renderInline } from './inline'
 
 /** First-run screen: point the app at the synced vault folder. */
@@ -10,17 +11,34 @@ function Setup(): React.JSX.Element {
   const openVault = useApp((s) => s.openVault)
   const error = useApp((s) => s.error)
   const [root, setRoot] = useState(useApp.getState().root)
+  const pick = async (): Promise<void> => {
+    try {
+      const { path } = await FolderPicker.pick()
+      setRoot(path)
+      await openVault(path)
+    } catch {
+      /* picker cancelled */
+    }
+  }
   return (
     <div className="setup">
       <h1>Verso</h1>
       <p>
-        Point Verso at the folder your sync app (Syncthing, FolderSync, …) keeps your notes in.
+        Choose the folder your sync app (Nextcloud, Syncthing, FolderSync, …) keeps your notes in.
         {isNative() && ' Grant “All files access” when Android asks — nothing leaves your phone.'}
       </p>
-      <input value={root} onChange={(e) => setRoot(e.target.value)} placeholder={DEFAULT_ROOT} />
-      <button className="primary" onClick={() => void openVault(root.trim() || DEFAULT_ROOT)}>
-        Open vault
-      </button>
+      {isNative() && (
+        <button className="primary" onClick={() => void pick()}>
+          📁 Choose folder…
+        </button>
+      )}
+      <details className="manual" open={!isNative()}>
+        <summary>Or type the path</summary>
+        <input value={root} onChange={(e) => setRoot(e.target.value)} placeholder={DEFAULT_ROOT} />
+        <button className="primary ghost" onClick={() => void openVault(root.trim() || DEFAULT_ROOT)}>
+          Open vault
+        </button>
+      </details>
       {error && <div className="error">{error}</div>}
     </div>
   )

@@ -104,3 +104,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   background: #3a2328; color: #fda4af; border: 1px solid #6e3540;
   border-radius: 10px; padding: 10px 14px; font-size: 14px; z-index: 30;
 }
+
+.manual { display: flex; flex-direction: column; gap: 12px; }
+.manual summary { color: var(--dim); cursor: pointer; font-size: 14px; }
+.primary.ghost { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }

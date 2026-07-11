@@ -3,9 +3,21 @@
  * folder on shared storage (kept in sync by Syncthing/FolderSync/Nextcloud);
  * in the browser (dev/e2e) an in-memory sample vault stands in.
  */
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { Filesystem, Encoding } from '@capacitor/filesystem'
 import type { NoteFile } from '@shared/types'
+
+/** Native folder picker (see FolderPickerPlugin.java); rejects on cancel. */
+export const FolderPicker = registerPlugin<{ pick(): Promise<{ path: string }> }>('FolderPicker')
+
+/** Turn what people type/paste into a real path: the Files app displays
+ *  "/Internal storage/…" for what is actually /storage/emulated/0/…. */
+export function normalizeRoot(input: string): string {
+  let p = input.trim().replace(/\/+$/, '')
+  p = p.replace(/^\/?internal storage\//i, '/storage/emulated/0/')
+  p = p.replace(/^\/sdcard(\/|$)/i, '/storage/emulated/0$1')
+  return p
+}
 
 export interface VaultFS {
   /** All .md files under the vault root, recursively. */

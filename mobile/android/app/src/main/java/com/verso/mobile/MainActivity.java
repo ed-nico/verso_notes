@@ -12,6 +12,7 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
   @Override
   public void onCreate(Bundle savedInstanceState) {
+    registerPlugin(FolderPickerPlugin.class);
     super.onCreate(savedInstanceState);
     // The vault lives in a user-chosen folder on shared storage (synced by
     // Syncthing & co). On Android 11+ that needs "All files access" — send the
