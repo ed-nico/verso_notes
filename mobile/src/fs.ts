@@ -1,0 +1,90 @@
+/**
+ * VaultFS — the mobile app's only filesystem surface. On a device it reads a
+ * folder on shared storage (kept in sync by Syncthing/FolderSync/Nextcloud);
+ * in the browser (dev/e2e) an in-memory sample vault stands in.
+ */
+import { Capacitor } from '@capacitor/core'
+import { Filesystem, Encoding } from '@capacitor/filesystem'
+import type { NoteFile } from '@shared/types'
+
+export interface VaultFS {
+  /** All .md files under the vault root, recursively. */
+  list(): Promise<NoteFile[]>
+  read(path: string): Promise<string>
+  write(path: string, text: string): Promise<void>
+}
+
+/** Folders never worth scanning on the phone. */
+const IGNORED = new Set(['.git', '.obsidian', '.verso', '.trash', '.stfolder', '.stversions', 'node_modules'])
+
+class DeviceFS implements VaultFS {
+  constructor(private root: string) {}
+
+  private abs(rel: string): string {
+    return `${this.root}/${rel}`
+  }
+
+  async list(): Promise<NoteFile[]> {
+    const out: NoteFile[] = []
+    const walk = async (rel: string): Promise<void> => {
+      const dir = rel ? this.abs(rel) : this.root
+      const { files } = await Filesystem.readdir({ path: dir })
+      for (const f of files) {
+        if (f.name.startsWith('.') || IGNORED.has(f.name)) continue
+        const childRel = rel ? `${rel}/${f.name}` : f.name
+        if (f.type === 'directory') await walk(childRel)
+        else if (f.name.toLowerCase().endsWith('.md')) {
+          out.push({ path: childRel, name: f.name.replace(/\.md$/i, ''), mtime: f.mtime ?? 0 })
+        }
+      }
+    }
+    await walk('')
+    return out.sort((a, b) => b.mtime - a.mtime)
+  }
+
+  async read(path: string): Promise<string> {
+    const r = await Filesystem.readFile({ path: this.abs(path), encoding: Encoding.UTF8 })
+    return typeof r.data === 'string' ? r.data : ''
+  }
+
+  async write(path: string, text: string): Promise<void> {
+    await Filesystem.writeFile({
+      path: this.abs(path),
+      data: text,
+      encoding: Encoding.UTF8,
+      recursive: true
+    })
+  }
+}
+
+/** Browser dev/e2e stand-in: a small interlinked vault in memory. */
+class ShimFS implements VaultFS {
+  private notes = new Map<string, string>([
+    ['Welcome.md', '- Welcome to **Verso mobile**\n- Open [[Reading List]] or the [[Projects/Alpha]] project\n- tags work: #mobile #demo\n'],
+    ['Reading List.md', '- [ ] Dune\n- [x] The Dispossessed\n- see [[Projects/Alpha]]\n'],
+    ['Projects/Alpha.md', '---\nstatus: active\n---\n# Alpha\n\n- links back to [[Welcome]]\n- `inline code` and *italics* and [a url](https://example.com)\n'],
+    ['Daily/2026/07/2026-07-11.md', '- an existing journal entry\n']
+  ])
+
+  async list(): Promise<NoteFile[]> {
+    return [...this.notes.keys()].map((path, i) => ({
+      path,
+      name: path.replace(/\.md$/i, '').split('/').pop()!,
+      mtime: 1000 - i
+    }))
+  }
+
+  async read(path: string): Promise<string> {
+    return this.notes.get(path) ?? ''
+  }
+
+  async write(path: string, text: string): Promise<void> {
+    this.notes.set(path, text)
+  }
+}
+
+export function makeVaultFS(root: string): VaultFS {
+  return Capacitor.isNativePlatform() ? new DeviceFS(root) : new ShimFS()
+}
+
+export const isNative = (): boolean => Capacitor.isNativePlatform()

@@ -1,0 +1,235 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { App as CapApp } from '@capacitor/app'
+import { parseBlocks, serializeBlocks, isList, type Block } from '@vlib/blocks'
+import { resolveTarget, pathForNewNote, dirname } from '@vlib/links'
+import { useApp, isNative, DEFAULT_ROOT } from './state'
+import { renderInline } from './inline'
+
+/** First-run screen: point the app at the synced vault folder. */
+function Setup(): React.JSX.Element {
+  const openVault = useApp((s) => s.openVault)
+  const error = useApp((s) => s.error)
+  const [root, setRoot] = useState(useApp.getState().root)
+  return (
+    <div className="setup">
+      <h1>Verso</h1>
+      <p>
+        Point Verso at the folder your sync app (Syncthing, FolderSync, …) keeps your notes in.
+        {isNative() && ' Grant “All files access” when Android asks — nothing leaves your phone.'}
+      </p>
+      <input value={root} onChange={(e) => setRoot(e.target.value)} placeholder={DEFAULT_ROOT} />
+      <button className="primary" onClick={() => void openVault(root.trim() || DEFAULT_ROOT)}>
+        Open vault
+      </button>
+      {error && <div className="error">{error}</div>}
+    </div>
+  )
+}
+
+/** Home: search + note list (most recently modified first). */
+function List(): React.JSX.Element {
+  const files = useApp((s) => s.files)
+  const openNote = useApp((s) => s.openNote)
+  const refresh = useApp((s) => s.refresh)
+  const [q, setQ] = useState('')
+  const hits = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    if (!needle) return files
+    return files.filter((f) => f.path.toLowerCase().includes(needle))
+  }, [files, q])
+  return (
+    <div className="screen">
+      <header>
+        <input
+          className="search"
+          placeholder="Search notes…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <button className="icon" title="Refresh" onClick={() => void refresh()}>
+          ⟳
+        </button>
+      </header>
+      <div className="list">
+        {hits.map((f) => (
+          <div key={f.path} className="row" onClick={() => void openNote(f.path)}>
+            <div className="row-name">{f.name}</div>
+            {f.path.includes('/') && <div className="row-dir">{dirname(f.path)}</div>}
+          </div>
+        ))}
+        {hits.length === 0 && <div className="empty">No notes{q ? ' match' : ' yet'}.</div>}
+      </div>
+      <Capture />
+    </div>
+  )
+}
+
+/** FAB + sheet: append a timestamped bullet to today's journal. */
+function Capture(): React.JSX.Element {
+  const captureToJournal = useApp((s) => s.captureToJournal)
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const add = async (): Promise<void> => {
+    await captureToJournal(text)
+    setText('')
+    setOpen(false)
+  }
+  return (
+    <>
+      {open && (
+        <div className="sheet-backdrop" onClick={() => setOpen(false)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <textarea
+              autoFocus
+              placeholder="Quick note → today's journal"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+            />
+            <button className="primary" disabled={!text.trim()} onClick={() => void add()}>
+              Add to journal
+            </button>
+          </div>
+        </div>
+      )}
+      <button className="fab" title="Quick capture" onClick={() => setOpen(true)}>
+        ＋
+      </button>
+    </>
+  )
+}
+
+/** One rendered block in the reader. */
+function BlockView({
+  b,
+  onWikilink,
+  onToggleTask
+}: {
+  b: Block
+  onWikilink: (t: string) => void
+  onToggleTask: (id: number) => void
+}): React.JSX.Element {
+  const opts = { onWikilink, onUrl: (u: string) => window.open(u, '_blank') }
+  if (b.type === 'code')
+    return (
+      <pre className="code">
+        <code>{b.text}</code>
+      </pre>
+    )
+  if (b.type === 'table') return <pre className="code table">{b.text}</pre>
+  if (b.type === 'heading') {
+    const H = `h${Math.min(b.level || 1, 4)}` as 'h1' | 'h2' | 'h3' | 'h4'
+    return <H>{renderInline(b.text, opts)}</H>
+  }
+  if (b.type === 'task')
+    return (
+      <div className="li task" style={{ marginLeft: b.level * 18 }}>
+        <input type="checkbox" checked={!!b.checked} onChange={() => onToggleTask(b.id)} />
+        <span className={b.checked ? 'done' : ''}>{renderInline(b.text, opts)}</span>
+      </div>
+    )
+  if (isList(b))
+    return (
+      <div className="li" style={{ marginLeft: b.level * 18 }}>
+        <span className="dot">{b.ordered ? `${b.ordinal ?? 1}.` : '•'}</span>
+        <span>{renderInline(b.text, opts)}</span>
+      </div>
+    )
+  if (b.text === '---') return <hr />
+  return <p>{renderInline(b.text, opts)}</p>
+}
+
+/** Reader + editor for the note on top of the nav stack. */
+function Note({ path }: { path: string }): React.JSX.Element {
+  const text = useApp((s) => s.texts[path] ?? '')
+  const files = useApp((s) => s.files)
+  const editing = useApp((s) => s.editing)
+  const setEditing = useApp((s) => s.setEditing)
+  const saveNote = useApp((s) => s.saveNote)
+  const openNote = useApp((s) => s.openNote)
+  const back = useApp((s) => s.back)
+  const [draft, setDraft] = useState(text)
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  useEffect(() => setDraft(text), [text, editing])
+
+  const { blocks, frontmatter } = useMemo(() => parseBlocks(text), [text])
+  const name = path.replace(/\.md$/i, '').split('/').pop()
+
+  const onWikilink = (target: string): void => {
+    const hit = resolveTarget(target, files.map((f) => f.path))
+    void openNote(hit ?? pathForNewNote(target))
+  }
+  const onToggleTask = (id: number): void => {
+    const next = blocks.map((b) => (b.id === id && b.type === 'task' ? { ...b, checked: !b.checked } : b))
+    void saveNote(path, serializeBlocks(next, frontmatter))
+  }
+  const finishEdit = (): void => {
+    if (draftRef.current !== text) void saveNote(path, draftRef.current)
+    setEditing(false)
+  }
+
+  return (
+    <div className="screen">
+      <header>
+        <button className="icon" onClick={back}>
+          ←
+        </button>
+        <div className="title">{name}</div>
+        {editing ? (
+          <button className="icon accent" onClick={finishEdit}>
+            ✓
+          </button>
+        ) : (
+          <button className="icon" onClick={() => setEditing(true)}>
+            ✎
+          </button>
+        )}
+      </header>
+      {editing ? (
+        <textarea className="editor" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
+      ) : (
+        <div className="reader" onClick={(e) => e.target === e.currentTarget && setEditing(true)}>
+          {blocks.map((b) => (
+            <BlockView key={b.id} b={b} onWikilink={onWikilink} onToggleTask={onToggleTask} />
+          ))}
+          {blocks.length === 0 && <div className="empty">Empty note — tap ✎ to write.</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function App(): React.JSX.Element {
+  const fs = useApp((s) => s.fs)
+  const stack = useApp((s) => s.stack)
+  const back = useApp((s) => s.back)
+  const error = useApp((s) => s.error)
+
+  // Android hardware back: pop the note stack; at the list, background the app.
+  useEffect(() => {
+    if (!isNative()) return
+    const sub = CapApp.addListener('backButton', () => {
+      if (useApp.getState().stack.length) back()
+      else void CapApp.minimizeApp()
+    })
+    return () => void sub.then((s) => s.remove())
+  }, [back])
+
+  // Browser dev: open the shim vault automatically.
+  useEffect(() => {
+    if (!fs && !isNative()) void useApp.getState().openVault(DEFAULT_ROOT)
+  }, [fs])
+
+  if (!fs) return <Setup />
+  const top = stack[stack.length - 1]
+  return (
+    <>
+      {top ? <Note key={top + ':' + stack.length} path={top} /> : <List />}
+      {error && (
+        <div className="toast" onClick={() => useApp.setState({ error: null })}>
+          {error}
+        </div>
+      )}
+    </>
+  )
+}

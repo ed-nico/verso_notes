@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Verso</string>
+    <string name="title_activity_main">Verso</string>
+    <string name="package_name">com.verso.mobile</string>
+    <string name="custom_url_scheme">com.verso.mobile</string>
+</resources>
