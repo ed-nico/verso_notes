@@ -18,6 +18,8 @@ export interface AcSuggestion {
   insert?: string
   /** Tag: the tag name to complete after `#` (supertags listed first, badged). */
   tag?: string
+  /** Tag picker: complete `#name` AND create a new supertag definition for it. */
+  createTag?: string
   /** Template: the template file's path to read and insert. */
   tplPath?: string
   /** Slash menu: the command id to run. */

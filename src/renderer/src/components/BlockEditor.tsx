@@ -1453,7 +1453,13 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         .sort((a, b) => a.localeCompare(b))
         .slice(0, 8)
         .map((t) => ({ key: `tag:${t}`, label: t, icon: '#', tag: t }))
-      return [...stHits, ...tagHits].slice(0, 10)
+      const rows = [...stHits, ...tagHits].slice(0, 9)
+      // Offer to mint a supertag for the typed name (also upgrades a plain tag).
+      const name = state.query.trim()
+      if (name && !supertagIndex.has(normTag(name))) {
+        rows.push({ key: '__new_st__', label: `New supertag “${name}”`, icon: '＋', createTag: name })
+      }
+      return rows
     }
     const nameCounts = new Map<string, number>()
     for (const f of files) nameCounts.set(f.name.toLowerCase(), (nameCounts.get(f.name.toLowerCase()) ?? 0) + 1)
@@ -1487,17 +1493,21 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const applyItem = (id: number, item: AcSuggestion): void => {
     if (item.cmd) return runSlash(id, item.cmd)
     if (item.tplPath) return void insertTemplate(id, item.tplPath)
-    if (item.tag !== undefined) {
+    if (item.tag !== undefined || item.createTag !== undefined) {
       // Complete the trailing `#partial` to `#Tag ` — behaving exactly as if typed,
-      // including the `<name> #<supertag> ` auto-entity rewrite.
+      // including the `<name> #<supertag> ` auto-entity rewrite. A createTag row also
+      // mints the supertag's definition note in the background (no navigation).
+      const name = item.createTag ?? item.tag!
       const ta = taRefs.current.get(id)
       if (!ta) return
       const before = ta.value.slice(0, ta.selectionStart)
       const after = ta.value.slice(ta.selectionStart)
       const start = before.lastIndexOf('#')
       if (start < 0) return
-      const completed = before.slice(0, start) + `#${item.tag} `
-      if (tryAutoEntity(id, completed, after)) return
+      const completed = before.slice(0, start) + `#${name} `
+      if (item.createTag !== undefined) {
+        void useStore.getState().createSupertag(item.createTag, { open: false })
+      } else if (tryAutoEntity(id, completed, after)) return
       pendingCaret.current = { id, pos: completed.length }
       setAc(null)
       replaceText(id, completed + after)
