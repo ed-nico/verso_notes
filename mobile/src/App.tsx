@@ -5,6 +5,7 @@ import { resolveTarget, pathForNewNote, dirname } from '@vlib/links'
 import { useApp, isNative, DEFAULT_ROOT } from './state'
 import { FolderPicker } from './fs'
 import { renderInline } from './inline'
+import { Drawer, BaseScreen, TodosScreen } from './screens'
 
 /** First-run screen: point the app at the synced vault folder. */
 function Setup(): React.JSX.Element {
@@ -44,20 +45,35 @@ function Setup(): React.JSX.Element {
   )
 }
 
+/** The ☰ button that opens the drawer, shared by every main screen's header. */
+function MenuButton(): React.JSX.Element {
+  const setDrawer = useApp((s) => s.setDrawer)
+  return (
+    <button className="icon" title="Menu" onClick={() => setDrawer(true)}>
+      ☰
+    </button>
+  )
+}
+
 /** Home: search + note list (most recently modified first). */
 function List(): React.JSX.Element {
   const files = useApp((s) => s.files)
+  const texts = useApp((s) => s.texts)
   const openNote = useApp((s) => s.openNote)
   const refresh = useApp((s) => s.refresh)
   const [q, setQ] = useState('')
   const hits = useMemo(() => {
     const needle = q.trim().toLowerCase()
     if (!needle) return files
-    return files.filter((f) => f.path.toLowerCase().includes(needle))
-  }, [files, q])
+    // Path match first, then full-text (texts arrive as the background scan fills in).
+    return files.filter(
+      (f) => f.path.toLowerCase().includes(needle) || (texts[f.path] ?? '').toLowerCase().includes(needle)
+    )
+  }, [files, texts, q])
   return (
     <div className="screen">
       <header>
+        <MenuButton />
         <input
           className="search"
           placeholder="Search notes…"
@@ -217,17 +233,53 @@ function Note({ path }: { path: string }): React.JSX.Element {
   )
 }
 
+/** Main screen for the current view when no note is open. */
+function ViewScreen(): React.JSX.Element {
+  const view = useApp((s) => s.view)
+  const bases = useApp((s) => s.bases)
+  const activeBaseId = useApp((s) => s.activeBaseId)
+  if (view === 'todos') {
+    return (
+      <div className="screen">
+        <header>
+          <MenuButton />
+          <div className="title">Todos</div>
+        </header>
+        <TodosScreen />
+      </div>
+    )
+  }
+  if (view === 'base') {
+    const base = bases.find((b) => b.id === activeBaseId) ?? bases[0]
+    if (base) {
+      return (
+        <div className="screen">
+          <header>
+            <MenuButton />
+            <div className="title">▦ {base.name}</div>
+          </header>
+          <BaseScreen base={base} />
+        </div>
+      )
+    }
+  }
+  return <List />
+}
+
 export default function App(): React.JSX.Element {
   const fs = useApp((s) => s.fs)
   const stack = useApp((s) => s.stack)
   const back = useApp((s) => s.back)
   const error = useApp((s) => s.error)
 
-  // Android hardware back: pop the note stack; at the list, background the app.
+  // Android hardware back: close the drawer, pop the note stack, else background.
   useEffect(() => {
     if (!isNative()) return
     const sub = CapApp.addListener('backButton', () => {
-      if (useApp.getState().stack.length) back()
+      const s = useApp.getState()
+      if (s.drawerOpen) s.setDrawer(false)
+      else if (s.stack.length) back()
+      else if (s.view !== 'notes') s.openView('notes')
       else void CapApp.minimizeApp()
     })
     return () => void sub.then((s) => s.remove())
@@ -238,16 +290,33 @@ export default function App(): React.JSX.Element {
     if (!fs && !isNative()) void useApp.getState().openVault(DEFAULT_ROOT)
   }, [fs])
 
+  // Swipe in from the left edge to open the drawer (like the desktop sidebar).
+  const edgeTouch = useRef<{ x: number; y: number } | null>(null)
+  const onTouchStart = (e: React.TouchEvent): void => {
+    const t = e.touches[0]
+    edgeTouch.current = t.clientX < 32 ? { x: t.clientX, y: t.clientY } : null
+  }
+  const onTouchMove = (e: React.TouchEvent): void => {
+    const start = edgeTouch.current
+    if (!start) return
+    const t = e.touches[0]
+    if (t.clientX - start.x > 48 && Math.abs(t.clientY - start.y) < 60) {
+      edgeTouch.current = null
+      useApp.getState().setDrawer(true)
+    }
+  }
+
   if (!fs) return <Setup />
   const top = stack[stack.length - 1]
   return (
-    <>
-      {top ? <Note key={top + ':' + stack.length} path={top} /> : <List />}
+    <div className="app-root" onTouchStart={onTouchStart} onTouchMove={onTouchMove}>
+      {top ? <Note key={top + ':' + stack.length} path={top} /> : <ViewScreen />}
+      <Drawer />
       {error && (
         <div className="toast" onClick={() => useApp.setState({ error: null })}>
           {error}
         </div>
       )}
-    </>
+    </div>
   )
 }

@@ -74,16 +74,21 @@ class ShimFS implements VaultFS {
   private notes = new Map<string, string>([
     ['Welcome.md', '- Welcome to **Verso mobile**\n- Open [[Reading List]] or the [[Projects/Alpha]] project\n- tags work: #mobile #demo\n'],
     ['Reading List.md', '- [ ] Dune\n- [x] The Dispossessed\n- see [[Projects/Alpha]]\n'],
-    ['Projects/Alpha.md', '---\nstatus: active\n---\n# Alpha\n\n- links back to [[Welcome]]\n- `inline code` and *italics* and [a url](https://example.com)\n'],
-    ['Daily/2026/07/2026-07-11.md', '- an existing journal entry\n']
+    ['Projects/Alpha.md', '---\nstatus: active\npriority: 1\n---\n# Alpha\n\n- links back to [[Welcome]]\n- `inline code` and *italics* and [a url](https://example.com)\n- [ ] ship the beta\n'],
+    ['Projects/Beta.md', '---\nstatus: done\npriority: 2\n---\n- finished project\n'],
+    ['Books/Dune.md', '---\nstatus: active\nrating: 5\n---\n- a classic\n'],
+    ['Daily/2026/07/2026-07-11.md', '- an existing journal entry\n'],
+    ['.verso/bases.json', JSON.stringify([{ id: 'b1', name: 'Active things', folder: '', tag: '', filters: [{ key: 'status', op: 'is', value: 'active' }], columns: ['name', 'status', 'priority'], groupKey: '', aggregates: {}, sortKey: 'name', sortDir: 'asc', layout: 'table' }])]
   ])
 
   async list(): Promise<NoteFile[]> {
-    return [...this.notes.keys()].map((path, i) => ({
-      path,
-      name: path.replace(/\.md$/i, '').split('/').pop()!,
-      mtime: 1000 - i
-    }))
+    return [...this.notes.keys()]
+      .filter((p) => p.toLowerCase().endsWith('.md') && !p.startsWith('.verso/'))
+      .map((path, i) => ({
+        path,
+        name: path.replace(/\.md$/i, '').split('/').pop()!,
+        mtime: 1000 - i
+      }))
   }
 
   async read(path: string): Promise<string> {

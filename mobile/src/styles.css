@@ -108,3 +108,46 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 .manual { display: flex; flex-direction: column; gap: 12px; }
 .manual summary { color: var(--dim); cursor: pointer; font-size: 14px; }
 .primary.ghost { background: var(--bg2); color: var(--text); border: 1px solid var(--border); }
+
+.app-root { height: 100%; }
+.drawer-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); z-index: 40;
+  opacity: 0; pointer-events: none; transition: opacity 0.2s;
+}
+.drawer-backdrop.show { opacity: 1; pointer-events: auto; }
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; width: min(82vw, 320px); z-index: 41;
+  background: var(--bg2); border-right: 1px solid var(--border);
+  transform: translateX(-102%); transition: transform 0.22s ease;
+  display: flex; flex-direction: column; overflow-y: auto;
+  padding: calc(env(safe-area-inset-top) + 10px) 0 env(safe-area-inset-bottom);
+}
+.drawer.show { transform: translateX(0); }
+.drawer-head { font-weight: 700; font-size: 17px; padding: 8px 16px 12px; border-bottom: 1px solid var(--border); }
+.drawer-nav { padding: 6px 0; border-bottom: 1px solid var(--border); }
+.nav-item { padding: 11px 16px; cursor: pointer; }
+.nav-item:active { background: var(--bg); }
+.drawer-label {
+  padding: 14px 16px 4px; font-size: 11.5px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--dim);
+}
+.drawer-tree { flex: 1; padding-bottom: 20px; }
+.tree-row { padding: 9px 16px 9px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree-row:active { background: var(--bg); }
+.tree-row.dir { color: var(--dim); }
+.tree-chevron { display: inline-block; width: 14px; color: var(--dim); }
+
+.group-head {
+  padding: 12px 16px 6px; font-weight: 600; color: var(--accent);
+  border-bottom: 1px solid var(--border); cursor: pointer;
+}
+.row-props { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.prop-pill {
+  font-size: 12px; color: var(--dim); background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+}
+.todo-row {
+  display: flex; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--border);
+  align-items: flex-start; cursor: pointer;
+}
+.todo-row input { margin-top: 4px; accent-color: var(--accent); }
