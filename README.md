@@ -25,7 +25,7 @@ Everything is local. Per-vault data (like saved Bases) lives inside the vault it
 
 ## Works with your existing vault
 
-Point Verso at any folder of Markdown — including an existing **Obsidian** vault. It reads and writes the same plain `.md` files with YAML frontmatter and `[[wikilinks]]`, and keeps its own settings in a `.verso/` folder inside the vault, so it won't disturb your `.obsidian/` configuration. Nothing is imported or converted; quit Verso and your notes are exactly where they always were.
+Point Verso at any folder of Markdown files, including an existing **Obsidian** vault. It reads and writes the same plain `.md` files with YAML frontmatter and `[[wikilinks]]`, and keeps its own settings in a `.verso/` folder inside the vault, so it won't disturb your `.obsidian/` configuration. Nothing is imported or converted -  quit Verso and your notes are exactly where they always were.
 
 ## Install
 
@@ -59,6 +59,8 @@ npm run build:win    # or: package a Windows installer
 
 On first launch, click **Open a folder** and point it at your own Markdown folder.
 
+## Showcase
+
 <img width="2312" height="2004" alt="CleanShot 2026-06-27 at 07 14 36@2x" src="https://github.com/user-attachments/assets/0726cf8f-f039-4818-be0b-561343515ca9" />
 
 <img width="2794" height="1836" alt="CleanShot 2026-06-27 at 08 24 34@2x" src="https://github.com/user-attachments/assets/12e2dd83-c1f2-4699-b921-babb933ff84e" />
@@ -71,13 +73,17 @@ Bug reports and ideas are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for
 
 ## Privacy
 
-Verso has **no telemetry, no analytics, no accounts, and no update pings**, and it never opens a network port. The app only touches the network to display things your notes embed (remote images, YouTube/Vimeo/Loom players), to open links you click, and — optionally — to fetch a pasted URL's page title ("smart link titles", one request to that URL; toggle it off in Settings). Spellcheck runs from a bundled dictionary, fully offline. Don't take my word for it: it's all in this repo.
+Verso has **no telemetry, no analytics, no accounts, and no update pings**, and it never opens a network port. 
+
+The app only touches the network to display things your notes embed (remote images, YouTube/Vimeo/Loom links), to open links you click, and, optionally, to fetch a pasted URL's page title ("smart link titles", one request to that URL; toggle it off in Settings). Spellcheck runs from a bundled dictionary, fully offline. 
+
+Don't just take my word for it, it's all in this repo.
 
 ## Status
 
-Verso is in active development (currently `v0.1.x`) and pre-1.0 — expect rough edges and the occasional breaking change. Issues and ideas welcome.
+Verso is in active development, so expect rough edges and the occasional breaking change. Issues and ideas welcome.
 
-No Mobile yet.
+No mobile yet (although being worked on).
 
 <img width="2302" height="1962" alt="CleanShot 2026-06-27 at 07 15 01@2x" src="https://github.com/user-attachments/assets/02836a55-1fdc-466a-90dc-6f68a1273032" />
 
