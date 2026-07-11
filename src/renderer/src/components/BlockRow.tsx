@@ -16,6 +16,8 @@ export interface AcSuggestion {
   excerpt?: string
   /** Link: text inserted inside `[[ ]]` — bare name, or full path when ambiguous. */
   insert?: string
+  /** Tag: the tag name to complete after `#` (supertags listed first, badged). */
+  tag?: string
   /** Template: the template file's path to read and insert. */
   tplPath?: string
   /** Slash menu: the command id to run. */
@@ -40,7 +42,7 @@ export interface RowApi {
   /** The editing surface: TableEditor for tables, the autosizing textarea otherwise. */
   renderEditing: (b: Block, index: number) => React.JSX.Element
   /** Popup kind for the ac list ('link' rows render breadcrumbs). */
-  acKind: () => 'link' | 'slash-menu' | 'slash-template' | null
+  acKind: () => 'link' | 'tag' | 'slash-menu' | 'slash-template' | null
 }
 
 interface BlockRowProps {
@@ -221,6 +223,7 @@ export const BlockRow = React.memo(function BlockRow({
                   <div key={it.key} className={'ol-ac-item' + (sel ? ' sel' : '')} onMouseDown={onPick}>
                     <span className="ol-ac-icon">{it.icon}</span>
                     <span className="ol-ac-label">{it.label}</span>
+                    {it.sub && <span className="ol-ac-crumbs">{it.sub}</span>}
                   </div>
                 )
               })}

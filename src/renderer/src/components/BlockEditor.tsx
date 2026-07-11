@@ -17,6 +17,7 @@ import { EntityCard } from './EntityCard'
 import {
   buildSupertagIndex,
   normTag,
+  resolveFields,
   supertagsForNote,
   supertagsFromParsed
 } from '../lib/supertags'
@@ -51,7 +52,7 @@ interface AcState {
   id: number
   query: string
   index: number
-  kind: 'link' | 'slash-menu' | 'slash-template'
+  kind: 'link' | 'tag' | 'slash-menu' | 'slash-template'
 }
 
 /** Commands offered by the `/` menu. */
@@ -1426,6 +1427,34 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         .map((t) => ({ key: t.path, label: t.name, icon: '▤', tplPath: t.path }))
       return list.length ? list : [{ key: '__none__', label: 'No templates — add .md files to Templates/', icon: '▤' }]
     }
+    if (state.kind === 'tag') {
+      // Supertags first (typed tags — completing one applies its field schema),
+      // then the vault's plain tags.
+      const stHits: AcSuggestion[] = [...supertagIndex.values()]
+        .filter((st) => st.tag.includes(q) || st.name.toLowerCase().includes(q))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 6)
+        .map((st) => {
+          const n = resolveFields(st.tag, supertagIndex).length
+          return {
+            key: `st:${st.tag}`,
+            label: st.name,
+            icon: '▤',
+            sub: n === 1 ? '1 field' : `${n} fields`,
+            tag: st.name
+          }
+        })
+      const plain = new Set<string>()
+      for (const note of Object.values(parsed)) {
+        for (const t of note.tags) if (!supertagIndex.has(normTag(t))) plain.add(t)
+      }
+      const tagHits: AcSuggestion[] = [...plain]
+        .filter((t) => t.toLowerCase().includes(q))
+        .sort((a, b) => a.localeCompare(b))
+        .slice(0, 8)
+        .map((t) => ({ key: `tag:${t}`, label: t, icon: '#', tag: t }))
+      return [...stHits, ...tagHits].slice(0, 10)
+    }
     const nameCounts = new Map<string, number>()
     for (const f of files) nameCounts.set(f.name.toLowerCase(), (nameCounts.get(f.name.toLowerCase()) ?? 0) + 1)
     const fileHits = files
@@ -1458,6 +1487,22 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const applyItem = (id: number, item: AcSuggestion): void => {
     if (item.cmd) return runSlash(id, item.cmd)
     if (item.tplPath) return void insertTemplate(id, item.tplPath)
+    if (item.tag !== undefined) {
+      // Complete the trailing `#partial` to `#Tag ` — behaving exactly as if typed,
+      // including the `<name> #<supertag> ` auto-entity rewrite.
+      const ta = taRefs.current.get(id)
+      if (!ta) return
+      const before = ta.value.slice(0, ta.selectionStart)
+      const after = ta.value.slice(ta.selectionStart)
+      const start = before.lastIndexOf('#')
+      if (start < 0) return
+      const completed = before.slice(0, start) + `#${item.tag} `
+      if (tryAutoEntity(id, completed, after)) return
+      pendingCaret.current = { id, pos: completed.length }
+      setAc(null)
+      replaceText(id, completed + after)
+      return
+    }
     if (item.insert === undefined) return // placeholder row (e.g. "No templates")
     const ta = taRefs.current.get(id)
     if (!ta) return
@@ -1566,20 +1611,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     // (the tag's meaning now lives on the entity, not in this line).
     if (b.type !== 'code') {
       const caret = e.target.selectionStart
-      const upto = value.slice(0, caret)
-      const m = upto.match(/(^|\s)(\[\[[^\]\n]+\]\]|[^\s#]+)[ \t]+#([\p{L}\d][\p{L}\d_/-]*)[ \t]$/u)
-      if (m && supertagIndex.has(normTag(m[3]))) {
-        const entityName = m[2].replace(/^\[\[|\]\]$/g, '').trim()
-        if (entityName) {
-          const head = upto.slice(0, (m.index ?? 0) + m[1].length)
-          const newUpto = `${head}[[${entityName}]] `
-          pendingCaret.current = { id: b.id, pos: newUpto.length }
-          replaceText(b.id, newUpto + value.slice(caret))
-          setAc(null)
-          void ensureEntity(entityName, m[3])
-          return
-        }
-      }
+      if (tryAutoEntity(b.id, value.slice(0, caret), value.slice(caret))) return
     }
     // Undo granularity: start a new step when switching insert↔delete, and end the
     // step after a whitespace (so each word is undoable on its own).
@@ -1590,7 +1622,29 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     if (op === 'ins' && /\s/.test(value[e.target.selectionStart - 1] ?? '')) coalesceGen.current++
     const upto = value.slice(0, e.target.selectionStart)
     const wl = upto.match(/\[\[([^\]\n]*)$/)
-    setAc(wl ? { id: b.id, query: wl[1], index: 0, kind: 'link' } : null)
+    if (wl) {
+      setAc({ id: b.id, query: wl[1], index: 0, kind: 'link' })
+      return
+    }
+    // `#` at the start of a word → tag autocomplete (supertags listed first, badged).
+    const tg = b.type !== 'code' ? upto.match(/(^|\s)#([\p{L}\d][\p{L}\d_/-]*)?$/u) : null
+    setAc(tg ? { id: b.id, query: tg[2] ?? '', index: 0, kind: 'tag' } : null)
+  }
+
+  /** `<name> #<supertag> ` before the caret → rewrite to `[[name]] ` and create/link
+   *  the typed entity. Shared by typing (onChange) and the `#` autocomplete picker. */
+  const tryAutoEntity = (id: number, upto: string, tail: string): boolean => {
+    const m = upto.match(/(^|\s)(\[\[[^\]\n]+\]\]|[^\s#]+)[ \t]+#([\p{L}\d][\p{L}\d_/-]*)[ \t]$/u)
+    if (!m || !supertagIndex.has(normTag(m[3]))) return false
+    const entityName = m[2].replace(/^\[\[|\]\]$/g, '').trim()
+    if (!entityName) return false
+    const head = upto.slice(0, (m.index ?? 0) + m[1].length)
+    const newUpto = `${head}[[${entityName}]] `
+    pendingCaret.current = { id, pos: newUpto.length }
+    replaceText(id, newUpto + tail)
+    setAc(null)
+    void ensureEntity(entityName, m[3])
+    return true
   }
 
   const onKeyDown = (b: Block, e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
