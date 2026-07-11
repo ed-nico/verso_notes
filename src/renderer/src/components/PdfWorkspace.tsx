@@ -440,7 +440,7 @@ export function PdfWorkspace({
   // a capped-width image + jump link in the note — mirroring how text highlights flow in.
   const onCreateArea = async (page: number, dataUrl: string, rect: HlRect): Promise<void> => {
     const base64 = dataUrl.split(',')[1] ?? ''
-    const rel = await window.inkwell.saveAsset(`pdf-area-${newId()}.png`, base64)
+    const rel = await window.verso.saveAsset(`pdf-area-${newId()}.png`, base64)
     if (!rel) return
     const id = newId()
     mutate((p) => [...p, { id, page, color: activeColor, text: `Area — p.${page}`, rects: [rect], kind: 'area', createdAt: Date.now() }])

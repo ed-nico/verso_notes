@@ -31,9 +31,9 @@ import {
 } from './workspace.js'
 import { addIgnoreWord, checkWords, setIgnoreWords, suggestWord } from './spell.js'
 
-// Must run before app is ready: lets `inkwell://` load in <img> and via fetch.
+// Must run before app is ready: lets `verso://` load in <img> and via fetch.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'inkwell', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+  { scheme: 'verso', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
 ])
 import type { NoteContent, WriteResult } from '../shared/types.js'
 import { PROD_CSP } from '../shared/csp.js'
@@ -44,7 +44,19 @@ let mainWindow: BrowserWindow | null = null
 
 /** Path to the tiny JSON file where we remember the last opened workspace. */
 function prefsPath(): string {
-  return path.join(app.getPath('userData'), 'inkwell-prefs.json')
+  return path.join(app.getPath('userData'), 'verso-prefs.json')
+}
+
+/** One-time migration: before 0.2 the prefs file used the old internal codename. */
+async function migrateLegacyPrefs(): Promise<void> {
+  try {
+    const legacy = path.join(app.getPath('userData'), 'inkwell-prefs.json')
+    await fs.access(prefsPath()).catch(async () => {
+      await fs.rename(legacy, prefsPath())
+    })
+  } catch {
+    /* no legacy file — nothing to migrate */
+  }
 }
 
 /** App-level prefs (not per-vault): the active vault plus the list of known vaults. */
@@ -478,7 +490,7 @@ function registerIpc(): void {
 function applyCsp(): void {
   const devUrl = process.env.ELECTRON_RENDERER_URL
   const policy = devUrl
-    ? "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: inkwell: https: ws: http://localhost:*; worker-src 'self' blob:"
+    ? "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: verso: https: ws: http://localhost:*; worker-src 'self' blob:"
     : PROD_CSP
   const devOrigin = ((): string | null => {
     try {
@@ -490,7 +502,7 @@ function applyCsp(): void {
   const isAppUrl = (url: string): boolean => {
     try {
       const u = new URL(url)
-      if (u.protocol === 'file:' || u.protocol === 'inkwell:') return true
+      if (u.protocol === 'file:' || u.protocol === 'verso:') return true
       return devOrigin !== null && u.origin === devOrigin
     } catch {
       return false
@@ -520,7 +532,7 @@ function applyCsp(): void {
   )
 }
 
-/** File types `inkwell://` may serve — images, pdf, audio, video. Everything else 404s. */
+/** File types `verso://` may serve — images, pdf, audio, video. Everything else 404s. */
 const PROTOCOL_ALLOWED_EXTS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
   '.pdf',
@@ -528,9 +540,9 @@ const PROTOCOL_ALLOWED_EXTS = new Set([
   '.mp3', '.wav', '.m4a'
 ])
 
-/** Serve workspace files to the renderer via inkwell://asset/<relative-path>. */
+/** Serve workspace files to the renderer via verso://asset/<relative-path>. */
 function registerAssetProtocol(): void {
-  protocol.handle('inkwell', async (request) => {
+  protocol.handle('verso', async (request) => {
     try {
       const url = new URL(request.url)
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
@@ -548,7 +560,8 @@ function registerAssetProtocol(): void {
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
+    await migrateLegacyPrefs()
     applyCsp()
     registerAssetProtocol()
     registerIpc()

@@ -321,7 +321,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   } | null>(null)
   const openSpellMenu = (blockId: number, word: string, x: number, y: number): void => {
     setSpellMenu({ blockId, word, x, y, suggestions: [] })
-    void window.inkwell.suggestSpelling(word).then((suggestions) =>
+    void window.verso.suggestSpelling(word).then((suggestions) =>
       setSpellMenu((prev) =>
         prev && prev.blockId === blockId && prev.word === word ? { ...prev, suggestions } : prev
       )
@@ -336,7 +336,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     setSpellMenu(null)
   }
   const ignoreSpellWord = (word: string): void => {
-    void window.inkwell.addToDictionary(word).then(() => resetSpell())
+    void window.verso.addToDictionary(word).then(() => resetSpell())
     setSpellMenu(null)
   }
 
@@ -1041,7 +1041,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // URL (so it never disturbs text you went on to type), and reads live blocks via the ref.
   const smartTitlePaste = (blockId: number, url: string): void => {
     if (!useStore.getState().smartLinkTitles) return // privacy toggle (Settings)
-    void window.inkwell.fetchTitle(url).then((title) => {
+    void window.verso.fetchTitle(url).then((title) => {
       if (!title) return
       const cur = blocksRef.current
       const idx = indexOfBlock(cur, blockId)
@@ -1396,7 +1396,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     const mds: string[] = []
     for (const file of Array.from(files)) {
       try {
-        const rel = await window.inkwell.saveAsset(file.name, await fileToBase64(file))
+        const rel = await window.verso.saveAsset(file.name, await fileToBase64(file))
         if (rel) mds.push(file.type.startsWith('image/') ? `![${file.name}](${rel})` : `[${file.name}](${rel})`)
       } catch (err) {
         console.error(`Failed to save asset ${file.name}:`, err)
@@ -1496,7 +1496,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     setAc(null)
     let raw: string
     try {
-      raw = (await window.inkwell.readNote(tplPath))?.text ?? ''
+      raw = (await window.verso.readNote(tplPath))?.text ?? ''
     } catch (err) {
       console.error(`Failed to read template ${tplPath}:`, err)
       return

@@ -11,10 +11,12 @@ with autocomplete, backlinks + unlinked references, a force-directed graph, Obsi
 "Bases" (database tables over frontmatter), tags, todos, a daily journal, templates, and a
 PDF annotator.
 
-**Naming note:** the product is branded **Verso** (`productName`, window title, `package.json`
-name) but the codebase internals all use **inkwell**: the preload bridge is `window.inkwell`
-(typed `InkwellApi`), the asset protocol is `inkwell://`, prefs live in `inkwell-prefs.json`.
-Keep using `inkwell` for internal identifiers; use `Verso` only for user-facing strings.
+**Naming note:** everything is **verso** — the preload bridge is `window.verso` (typed
+`VersoApi`), the asset protocol is `verso://`, prefs live in `verso-prefs.json`. The
+project's original codename was "inkwell"; two one-time migrations cover installs from
+that era (the prefs-file rename in `main/index.ts`, the `inkwell-*` → `verso-*`
+localStorage rename at the top of `store.ts`) — don't remove them, and don't
+reintroduce the old name.
 
 ## Commands
 
@@ -39,16 +41,16 @@ Three Electron contexts, wired by electron-vite (`electron.vite.config.ts`). The
 **never touches the filesystem** — all I/O crosses the preload bridge.
 
 ```
-renderer (React)  ──window.inkwell──▶  preload (contextBridge)  ──ipcRenderer.invoke──▶  main
+renderer (React)  ──window.verso──▶  preload (contextBridge)  ──ipcRenderer.invoke──▶  main
    src/renderer/                          src/preload/index.ts                    src/main/{index,workspace}.ts
 ```
 
-- **`src/shared/types.ts`** — the contract between processes. `InkwellApi` is the full IPC
+- **`src/shared/types.ts`** — the contract between processes. `VersoApi` is the full IPC
   surface; `NoteFile` / `NoteContent` / `ParsedNote` / `LinkRef` are the core data shapes.
   Edit this first when adding an IPC method, then preload, then a `main` `ipcMain.handle`.
 - **`src/main/index.ts`** — window creation, IPC handlers, CSP (permissive in dev, strict in
-  prod), and the `inkwell://` custom protocol that serves workspace assets (images/PDFs) to
-  the renderer. Remembers the last workspace in `userData/inkwell-prefs.json`.
+  prod), and the `verso://` custom protocol that serves workspace assets (images/PDFs) to
+  the renderer. Remembers the last workspace in `userData/verso-prefs.json`.
 - **`src/main/workspace.ts`** — all disk access, scoped to the chosen workspace root. All
   writes are atomic (`atomicWrite`: temp file + rename) and return a `WriteResult`
   (`{ok} | {ok:false,error}`) so the renderer can surface failures. A chokidar watcher
@@ -74,7 +76,7 @@ Key invariants and patterns:
 - **All disk writes go through `queueWrite`** — a per-path promise chain, so a debounced
   flush and an immediate write (properties, task toggle) can never land out of order. A
   failed write sets `saveError`, shown as a toast by App.tsx. Never call
-  `window.inkwell.writeNote` directly from the store.
+  `window.verso.writeNote` directly from the store.
 - **Watcher vs. local edits.** `applyFileEvent` skips `change` events for paths with pending
   unsaved buffers (`isPending`) to avoid clobbering the editor. Async file events read first,
   then merge onto fresh state via functional `set` updates so bursts don't overwrite.
@@ -86,7 +88,7 @@ Key invariants and patterns:
   checkbox toggle survives an instant quit (and App.tsx flushes pending writes on window hide/close).
 - **Per-vault data lives in the vault, not localStorage.** Bases are stored in
   `<root>/.verso/bases.json` (loaded in `bootstrap`/`openWorkspace`, saved by `setBases`), with
-  a one-time migration from the old `inkwell-bases` localStorage key. Don't reintroduce
+  a one-time migration from the old `verso-bases` localStorage key. Don't reintroduce
   localStorage for vault data — it splits between the dev (`localhost`) and packaged (`file://`) origins.
 - Navigation is panes, not tabs: a main pane (with back/forward `history`, capped at 200
   steps) plus any number of right-hand splits (`sidePanes: SidePane[]` — cmd-clicked notes /
@@ -161,8 +163,8 @@ rather than the store.
 
 - **pdfjs-dist is pinned to v4** (`^4.10.38`); v5 dropped APIs this code relies on. The PDF
   worker and the lib are lazy-loaded (`App.tsx`) because they're large.
-- Adding an IPC call means touching four files in order: `shared/types.ts` (`InkwellApi`) →
+- Adding an IPC call means touching four files in order: `shared/types.ts` (`VersoApi`) →
   `preload/index.ts` → `main/index.ts` (`registerIpc`) → `main/workspace.ts`.
 - Import aliases: `@/*` → `src/renderer/src/*`, `@shared/*` → `src/shared/*`.
-- Assets referenced in notes must be served through `inkwell://` (handled in `main/index.ts`);
+- Assets referenced in notes must be served through `verso://` (handled in `main/index.ts`);
   the renderer can't read files by path. New images are saved into the workspace `assets/` folder.

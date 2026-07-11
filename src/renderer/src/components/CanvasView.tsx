@@ -117,7 +117,7 @@ function CanvasSurface({ path }: { path: string }): React.JSX.Element {
   // ---- load + persist ----
   useEffect(() => {
     let alive = true
-    void window.inkwell.readCanvas(path).then((raw) => {
+    void window.verso.readCanvas(path).then((raw) => {
       if (!alive) return
       const d = normalizeDoc(raw)
       setDoc(d)
@@ -140,7 +140,7 @@ function CanvasSurface({ path }: { path: string }): React.JSX.Element {
     }
     if (!dirtyRef.current) return
     dirtyRef.current = false
-    void window.inkwell.writeCanvas(path, docRef.current)
+    void window.verso.writeCanvas(path, docRef.current)
   }, [path])
 
   const markDirty = useCallback((): void => {
@@ -1068,7 +1068,7 @@ function LinkCard({ url, onEdit }: { url: string; onEdit: () => void }): React.J
   useEffect(() => {
     if (!url || titleCache.has(url)) return
     let alive = true
-    void window.inkwell.fetchTitle(url).then((t) => {
+    void window.verso.fetchTitle(url).then((t) => {
       if (!alive) return
       const val = t ?? ''
       titleCache.set(url, val)

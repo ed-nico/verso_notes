@@ -8,7 +8,7 @@
  */
 
 /** DnD MIME the sidebar tags a note row with, so it can be dropped onto a canvas. */
-export const NOTE_DND_MIME = 'application/x-inkwell-note'
+export const NOTE_DND_MIME = 'application/x-verso-note'
 
 /** A node colour: a preset slot "1".."6" (Obsidian's palette) or an explicit "#rrggbb". */
 export type CanvasColor = string

@@ -20,6 +20,19 @@ import {
   type FieldDef
 } from './lib/supertags'
 
+// One-time migration: before 0.2, localStorage keys used the old internal codename
+// ("inkwell-*"). Must run before the store's initial state reads any of them.
+if (typeof localStorage !== 'undefined') {
+  for (const k of Object.keys(localStorage)) {
+    if (!k.startsWith('inkwell-')) continue
+    const renamed = 'verso-' + k.slice('inkwell-'.length)
+    if (localStorage.getItem(renamed) === null) {
+      localStorage.setItem(renamed, localStorage.getItem(k)!)
+    }
+    localStorage.removeItem(k)
+  }
+}
+
 export type ViewMode =
   | 'editor'
   | 'graph'
@@ -61,7 +74,7 @@ export interface SidePane {
   path: string
 }
 
-interface InkwellState {
+interface VersoState {
   workspace: Workspace | null
   /** All vaults the user has opened, most-recent first — for the sidebar switcher. */
   recentVaults: string[]
@@ -249,7 +262,7 @@ async function loadAll(): Promise<{
   texts: Record<string, string>
   parsed: Record<string, ParsedNote>
 }> {
-  const contents = await window.inkwell.readAll()
+  const contents = await window.verso.readAll()
   const texts: Record<string, string> = {}
   const parsed: Record<string, ParsedNote> = {}
   for (const { path, text } of contents) {
@@ -265,17 +278,17 @@ async function loadAll(): Promise<{
  * so bases made in the dev app and the installed app both survive into the vault file.
  */
 async function loadWorkspaceBases(): Promise<Base[]> {
-  const vault = normalizeBases(await window.inkwell.readBases())
+  const vault = normalizeBases(await window.verso.readBases())
   const legacy = legacyLocalBases()
   if (legacy.length === 0) return vault
   const ids = new Set(vault.map((b) => b.id))
   const merged = [...vault, ...legacy.filter((b) => !ids.has(b.id))]
   clearLegacyLocalBases()
-  await window.inkwell.writeBases(merged)
+  await window.verso.writeBases(merged)
   return merged
 }
 
-export const useStore = create<InkwellState>((set, get) => {
+export const useStore = create<VersoState>((set, get) => {
   // Rebuilding the whole vault index (backlinks + block scan over every note) is
   // too heavy to run on every keystroke, so we debounce it. texts/parsed update
   // immediately; index consumers (backlinks, queries, graph) are eventually consistent.
@@ -342,7 +355,7 @@ export const useStore = create<InkwellState>((set, get) => {
   const writeChains = new Map<string, Promise<void>>()
   const queueWrite = (p: string, t: string): Promise<void> => {
     const chained = (writeChains.get(p) ?? Promise.resolve()).then(async () => {
-      const res = await window.inkwell.writeNote(p, t)
+      const res = await window.verso.writeNote(p, t)
       if (!res.ok) {
         set({ saveError: `Couldn't save ${p}: ${res.error}` })
         // Don't drop the edit: put the text back in the buffer (unless a newer edit
@@ -411,7 +424,7 @@ export const useStore = create<InkwellState>((set, get) => {
     })
     const bases = await loadWorkspaceBases()
     set({ bases, activeBaseId: bases[0]?.id ?? null })
-    const canvases = await window.inkwell.listCanvases()
+    const canvases = await window.verso.listCanvases()
     set({ canvases, activeCanvasPath: canvases[0]?.path ?? null })
     await get().reloadCustomCss()
   }
@@ -504,59 +517,59 @@ export const useStore = create<InkwellState>((set, get) => {
     activeTag: null,
     modal: null,
     paletteOpen: false,
-    sidebarOpen: localStorage.getItem('inkwell-sidebar') !== 'closed',
-    rightbarOpen: localStorage.getItem('inkwell-rightbar') !== 'closed',
-    theme: (localStorage.getItem('inkwell-theme') as 'light' | 'dark' | null) ?? 'dark',
-    accent: localStorage.getItem('inkwell-accent') ?? 'indigo',
+    sidebarOpen: localStorage.getItem('verso-sidebar') !== 'closed',
+    rightbarOpen: localStorage.getItem('verso-rightbar') !== 'closed',
+    theme: (localStorage.getItem('verso-theme') as 'light' | 'dark' | null) ?? 'dark',
+    accent: localStorage.getItem('verso-accent') ?? 'indigo',
     customCss: null,
-    editorFont: localStorage.getItem('inkwell-font') ?? 'sans',
-    editorFontSize: Number(localStorage.getItem('inkwell-fontsize')) || 16,
-    smartLinkTitles: localStorage.getItem('inkwell-smart-titles') !== 'off',
+    editorFont: localStorage.getItem('verso-font') ?? 'sans',
+    editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
+    smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
     dirty: false,
     loading: false,
     saveError: null,
 
     toggleTheme: () => {
       const theme = get().theme === 'dark' ? 'light' : 'dark'
-      localStorage.setItem('inkwell-theme', theme)
+      localStorage.setItem('verso-theme', theme)
       set({ theme })
     },
 
     setAccent: (accent) => {
-      localStorage.setItem('inkwell-accent', accent)
+      localStorage.setItem('verso-accent', accent)
       set({ accent })
     },
 
     reloadCustomCss: async () => {
-      set({ customCss: await window.inkwell.readCustomCss() })
+      set({ customCss: await window.verso.readCustomCss() })
     },
 
     dismissSaveError: () => set({ saveError: null }),
 
     toggleSidebar: () => {
       const sidebarOpen = !get().sidebarOpen
-      localStorage.setItem('inkwell-sidebar', sidebarOpen ? 'open' : 'closed')
+      localStorage.setItem('verso-sidebar', sidebarOpen ? 'open' : 'closed')
       set({ sidebarOpen })
     },
 
     toggleRightbar: () => {
       const rightbarOpen = !get().rightbarOpen
-      localStorage.setItem('inkwell-rightbar', rightbarOpen ? 'open' : 'closed')
+      localStorage.setItem('verso-rightbar', rightbarOpen ? 'open' : 'closed')
       set({ rightbarOpen })
     },
 
     setEditorFont: (editorFont) => {
-      localStorage.setItem('inkwell-font', editorFont)
+      localStorage.setItem('verso-font', editorFont)
       set({ editorFont })
     },
 
     setEditorFontSize: (editorFontSize) => {
-      localStorage.setItem('inkwell-fontsize', String(editorFontSize))
+      localStorage.setItem('verso-fontsize', String(editorFontSize))
       set({ editorFontSize })
     },
 
     setSmartLinkTitles: (smartLinkTitles) => {
-      localStorage.setItem('inkwell-smart-titles', smartLinkTitles ? 'on' : 'off')
+      localStorage.setItem('verso-smart-titles', smartLinkTitles ? 'on' : 'off')
       set({ smartLinkTitles })
     },
 
@@ -571,14 +584,14 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     newFromTemplate: async (templatePath, folder = '') => {
-      const tpl = (await window.inkwell.readNote(templatePath))?.text ?? ''
+      const tpl = (await window.verso.readNote(templatePath))?.text ?? ''
       const taken = new Set(get().files.map((f) => f.path.toLowerCase()))
       const prefix = folder ? `${folder}/` : ''
       let path = `${prefix}Untitled.md`
       let i = 1
       while (taken.has(path.toLowerCase())) path = `${prefix}Untitled ${i++}.md`
       const text = applyTemplate(tpl, basename(path), new Date())
-      const created = await window.inkwell.createNote(path, text)
+      const created = await window.verso.createNote(path, text)
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         get().openNote(created.path)
@@ -607,7 +620,7 @@ export const useStore = create<InkwellState>((set, get) => {
       )
       let path = existing
       if (!path) {
-        const created = await window.inkwell.createNote(pathForNewNote(name), '')
+        const created = await window.verso.createNote(pathForNewNote(name), '')
         if (!created) return name
         await get().applyFileEvent({ type: 'add', file: created })
         path = created.path
@@ -621,7 +634,7 @@ export const useStore = create<InkwellState>((set, get) => {
       if (!clean) return
       const path = `${TAGS_DIR}/${clean}.md`
       if (get().files.some((f) => f.path.toLowerCase() === path.toLowerCase())) return get().openNote(path)
-      const created = await window.inkwell.createNote(path, '---\nfields: {}\n---\n')
+      const created = await window.verso.createNote(path, '---\nfields: {}\n---\n')
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         get().openNote(created.path)
@@ -673,7 +686,7 @@ export const useStore = create<InkwellState>((set, get) => {
         await get().setSupertagFields(defPath, fields)
       } else {
         const text = replaceFrontmatter(`# ${name}\n`, { fields: fieldsToFrontmatter(fields) })
-        const created = await window.inkwell.createNote(tagPath, text)
+        const created = await window.verso.createNote(tagPath, text)
         if (!created) return
         await get().applyFileEvent({ type: 'add', file: created })
       }
@@ -683,7 +696,7 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     applyTemplateToNote: async (notePath, templatePath) => {
-      const raw = (await window.inkwell.readNote(templatePath))?.text ?? ''
+      const raw = (await window.verso.readNote(templatePath))?.text ?? ''
       const noteName = get().files.find((f) => f.path === notePath)?.name ?? basename(notePath)
       const tpl = parseFrontmatter(applyTemplate(raw, noteName, new Date()))
       const cur = parseFrontmatter(get().texts[notePath] ?? '')
@@ -713,7 +726,7 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     setBases: (bases) => {
-      void window.inkwell.writeBases(bases)
+      void window.verso.writeBases(bases)
       const activeBaseId = bases.some((b) => b.id === get().activeBaseId)
         ? get().activeBaseId
         : (bases[0]?.id ?? null)
@@ -727,7 +740,7 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     refreshCanvases: async () => {
-      const canvases = await window.inkwell.listCanvases()
+      const canvases = await window.verso.listCanvases()
       const active = get().activeCanvasPath
       set({
         canvases,
@@ -755,14 +768,14 @@ export const useStore = create<InkwellState>((set, get) => {
       let path = `${prefix}${clean}.canvas`
       let i = 1
       while (taken.has(path.toLowerCase())) path = `${prefix}${clean} ${i++}.canvas`
-      const created = await window.inkwell.createCanvas(path)
+      const created = await window.verso.createCanvas(path)
       if (!created) return
       set({ canvases: [created, ...get().canvases], activeCanvasPath: created.path, view: 'canvas' })
       pushHistory({ kind: 'view', view: 'canvas', canvasPath: created.path })
     },
 
     deleteCanvas: async (path) => {
-      const ok = await window.inkwell.deleteCanvas(path)
+      const ok = await window.verso.deleteCanvas(path)
       if (!ok) return
       const canvases = get().canvases.filter((c) => c.path !== path)
       const activeCanvasPath = get().activeCanvasPath === path ? (canvases[0]?.path ?? null) : get().activeCanvasPath
@@ -775,7 +788,7 @@ export const useStore = create<InkwellState>((set, get) => {
       const dir = dirname(path)
       const newPath = trimmed.includes('/') ? `${trimmed}.canvas` : dir ? `${dir}/${trimmed}.canvas` : `${trimmed}.canvas`
       if (newPath === path) return
-      const meta = await window.inkwell.renameCanvas(path, newPath)
+      const meta = await window.verso.renameCanvas(path, newPath)
       if (!meta) return
       set({
         canvases: get().canvases.map((c) => (c.path === path ? meta : c)),
@@ -784,42 +797,42 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     bootstrap: async () => {
-      set({ recentVaults: await window.inkwell.getWorkspaces() })
-      const last = await window.inkwell.getLastWorkspace()
+      set({ recentVaults: await window.verso.getWorkspaces() })
+      const last = await window.verso.getLastWorkspace()
       if (!last) return
       set({ loading: true })
-      const ws = await window.inkwell.loadWorkspace(last)
+      const ws = await window.verso.loadWorkspace(last)
       if (!ws) return set({ loading: false })
       await applyWorkspace(ws)
     },
 
     openWorkspace: async () => {
       set({ loading: true })
-      const ws = await window.inkwell.openWorkspace()
+      const ws = await window.verso.openWorkspace()
       if (!ws) return set({ loading: false })
       await applyWorkspace(ws)
-      set({ recentVaults: await window.inkwell.getWorkspaces() })
+      set({ recentVaults: await window.verso.getWorkspaces() })
     },
 
     switchVault: async (root) => {
       if (get().workspace?.root === root) return
       if (get().dirty) await flushAll() // don't lose unsaved edits on swap
       set({ loading: true })
-      const ws = await window.inkwell.loadWorkspace(root)
+      const ws = await window.verso.loadWorkspace(root)
       if (!ws) return set({ loading: false })
       await applyWorkspace(ws)
-      set({ recentVaults: await window.inkwell.getWorkspaces() })
+      set({ recentVaults: await window.verso.getWorkspaces() })
     },
 
     forgetVault: async (root) => {
-      const remaining = await window.inkwell.forgetWorkspace(root)
+      const remaining = await window.verso.forgetWorkspace(root)
       set({ recentVaults: remaining })
     },
 
     reloadVault: async () => {
       const ws = get().workspace
       if (!ws) return
-      const fresh = await window.inkwell.loadWorkspace(ws.root)
+      const fresh = await window.verso.loadWorkspace(ws.root)
       if (!fresh) return
       const { texts, parsed } = await loadAll()
       const exists = (p: string | null | undefined): boolean => !!p && fresh.files.some((f) => f.path === p)
@@ -995,7 +1008,7 @@ export const useStore = create<InkwellState>((set, get) => {
       const path = pathForNewNote(raw)
       // Start with an empty body — the title comes from the filename (shown at the top),
       // so the note opens as a blank paragraph ready for typing.
-      const created = await window.inkwell.createNote(path, '')
+      const created = await window.verso.createNote(path, '')
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         side ? get().openInSidePane(created.path) : get().openNote(created.path)
@@ -1013,10 +1026,10 @@ export const useStore = create<InkwellState>((set, get) => {
           (f) => f.path.startsWith('Templates/') && /^journal( template)?$/i.test(f.name)
         )
         const seed = tpl
-          ? applyTemplate((await window.inkwell.readNote(tpl.path))?.text ?? '', basename(path), new Date())
+          ? applyTemplate((await window.verso.readNote(tpl.path))?.text ?? '', basename(path), new Date())
           : ''
         if (!exists) {
-          const created = await window.inkwell.createNote(path, seed)
+          const created = await window.verso.createNote(path, seed)
           if (created) await get().applyFileEvent({ type: 'add', file: created })
         } else if (seed) {
           get().editNote(path, seed)
@@ -1034,7 +1047,7 @@ export const useStore = create<InkwellState>((set, get) => {
         return
       }
       if (evPath === '.verso/bases.json') {
-        const bases = normalizeBases(await window.inkwell.readBases())
+        const bases = normalizeBases(await window.verso.readBases())
         const activeBaseId = bases.some((b) => b.id === get().activeBaseId)
           ? get().activeBaseId
           : (bases[0]?.id ?? null)
@@ -1073,7 +1086,7 @@ export const useStore = create<InkwellState>((set, get) => {
       // open note / splits follow the file instead of resetting).
       if (event.type === 'rename') {
         dropFromScanCache(event.oldPath)
-        const content = await window.inkwell.readNote(event.path)
+        const content = await window.verso.readNote(event.path)
         set((state) => {
           const texts = { ...state.texts }
           const parsed = { ...state.parsed }
@@ -1112,7 +1125,7 @@ export const useStore = create<InkwellState>((set, get) => {
       // Read first (this awaits), THEN merge onto the freshest state — otherwise
       // a burst of adds would each start from the same stale snapshot and overwrite
       // one another, so only the last few would survive.
-      const content = await window.inkwell.readNote(file.path)
+      const content = await window.verso.readNote(file.path)
       if (content === null) return
       set((state) => {
         const texts = { ...state.texts, [file.path]: content.text }
@@ -1139,7 +1152,7 @@ export const useStore = create<InkwellState>((set, get) => {
 
       const state = get()
       if (isPending(oldPath)) await flushAll()
-      const created = await window.inkwell.renameNote(oldPath, newPath)
+      const created = await window.verso.renameNote(oldPath, newPath)
       if (!created) return
       dropFromScanCache(oldPath)
 
@@ -1169,7 +1182,7 @@ export const useStore = create<InkwellState>((set, get) => {
         })
         // Canvas cards point at notes by path — retarget any that referenced the old path.
         for (const c of get().canvases) {
-          const doc = normalizeDoc(await window.inkwell.readCanvas(c.path))
+          const doc = normalizeDoc(await window.verso.readCanvas(c.path))
           let changed = false
           const nodes = doc.nodes.map((n) => {
             if (n.type === 'file' && n.file === oldPath) {
@@ -1178,7 +1191,7 @@ export const useStore = create<InkwellState>((set, get) => {
             }
             return n
           })
-          if (changed) await window.inkwell.writeCanvas(c.path, { ...doc, nodes })
+          if (changed) await window.verso.writeCanvas(c.path, { ...doc, nodes })
         }
       } catch (e) {
         // The file moved but a referrer-rewrite failed partway through, so memory and
@@ -1198,19 +1211,19 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     deleteNote: async (path) => {
-      const ok = await window.inkwell.deleteNote(path)
+      const ok = await window.verso.deleteNote(path)
       if (!ok) return
       await get().applyFileEvent({ type: 'unlink', path })
     },
 
     duplicateNote: async (path) => {
-      const text = get().texts[path] ?? (await window.inkwell.readNote(path))?.text ?? ''
+      const text = get().texts[path] ?? (await window.verso.readNote(path))?.text ?? ''
       const base = path.replace(/\.md$/i, '')
       const taken = new Set(get().files.map((f) => f.path.toLowerCase()))
       let np = `${base} copy.md`
       let i = 2
       while (taken.has(np.toLowerCase())) np = `${base} copy ${i++}.md`
-      const created = await window.inkwell.createNote(np, text)
+      const created = await window.verso.createNote(np, text)
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         get().openNote(created.path)
@@ -1218,7 +1231,7 @@ export const useStore = create<InkwellState>((set, get) => {
     },
 
     revealNote: async (path) => {
-      await window.inkwell.revealNote(path)
+      await window.verso.revealNote(path)
     }
   }
 })

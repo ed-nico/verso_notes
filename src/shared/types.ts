@@ -95,7 +95,7 @@ export type FileEvent =
   | { type: 'rename'; path: string; oldPath: string; file?: NoteFile }
 
 /** API exposed to the renderer via the preload contextBridge. */
-export interface InkwellApi {
+export interface VersoApi {
   /** `process.platform` ('darwin' | 'win32' | 'linux' | …) — for platform-specific labels. */
   platform: string
   openWorkspace: () => Promise<Workspace | null>

@@ -30,7 +30,7 @@ function sidecarPath(pdfPath: string): string {
 }
 
 export async function loadHighlights(pdfPath: string): Promise<Highlight[]> {
-  const c = await window.inkwell.readNote(sidecarPath(pdfPath))
+  const c = await window.verso.readNote(sidecarPath(pdfPath))
   if (!c) return []
   try {
     const parsed = JSON.parse(c.text)
@@ -41,5 +41,5 @@ export async function loadHighlights(pdfPath: string): Promise<Highlight[]> {
 }
 
 export async function saveHighlights(pdfPath: string, list: Highlight[]): Promise<void> {
-  await window.inkwell.writeNote(sidecarPath(pdfPath), JSON.stringify(list, null, 2))
+  await window.verso.writeNote(sidecarPath(pdfPath), JSON.stringify(list, null, 2))
 }

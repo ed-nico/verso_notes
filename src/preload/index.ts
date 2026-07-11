@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { FileEvent, InkwellApi } from '../shared/types.js'
+import type { FileEvent, VersoApi } from '../shared/types.js'
 
-const api: InkwellApi = {
+const api: VersoApi = {
   platform: process.platform,
   openWorkspace: () => ipcRenderer.invoke('workspace:open'),
   loadWorkspace: (root) => ipcRenderer.invoke('workspace:load', root),
@@ -38,4 +38,4 @@ const api: InkwellApi = {
   }
 }
 
-contextBridge.exposeInMainWorld('inkwell', api)
+contextBridge.exposeInMainWorld('verso', api)

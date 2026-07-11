@@ -37,7 +37,7 @@ export interface Base {
 }
 
 /** Legacy localStorage key — read once to migrate old bases into the vault file. */
-const LEGACY_KEY = 'inkwell-bases'
+const LEGACY_KEY = 'verso-bases'
 
 /** Coerce stored JSON into a Base[], backfilling fields added over time. */
 export function normalizeBases(raw: unknown): Base[] {

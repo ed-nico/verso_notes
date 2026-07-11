@@ -50,7 +50,7 @@ async function flush(): Promise<void> {
   for (const w of words) inflight.add(w)
   let bad: string[] = []
   try {
-    bad = await window.inkwell.checkSpelling(words)
+    bad = await window.verso.checkSpelling(words)
   } catch {
     /* on failure, treat all as correct so we never underline the whole note */
   }

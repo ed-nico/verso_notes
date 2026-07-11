@@ -1,6 +1,6 @@
 /** Platform-specific UI wording. The platform comes over the preload bridge. */
 
-const platform = window.inkwell?.platform ?? 'darwin'
+const platform = window.verso?.platform ?? 'darwin'
 
 export const isMac = platform === 'darwin'
 

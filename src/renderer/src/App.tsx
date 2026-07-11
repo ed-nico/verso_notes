@@ -347,7 +347,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     void bootstrap()
-    const off = window.inkwell.onFileEvent((event) => void applyFileEvent(event))
+    const off = window.verso.onFileEvent((event) => void applyFileEvent(event))
     return off
   }, [bootstrap, applyFileEvent])
 

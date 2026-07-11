@@ -3,7 +3,7 @@
  * debounced flush races an immediate write) and the rename pipeline (link
  * rewriting in referrers and in the renamed note itself).
  *
- * The store touches `window.inkwell` and `localStorage` at module scope, so both
+ * The store touches `window.verso` and `localStorage` at module scope, so both
  * are stubbed BEFORE the store is imported (dynamic import in beforeAll).
  */
 import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
@@ -18,7 +18,7 @@ let writeDelay = 0
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-const inkwell = {
+const verso = {
   writeNote: vi.fn(async (path: string, text: string): Promise<WriteResult> => {
     writeLog.push({ path, text, phase: 'start' })
     inFlight++
@@ -49,7 +49,7 @@ vi.stubGlobal('localStorage', {
   setItem: (k: string, v: string) => void storage.set(k, v),
   removeItem: (k: string) => void storage.delete(k)
 })
-vi.stubGlobal('window', { inkwell })
+vi.stubGlobal('window', { verso })
 
 // Imported dynamically so the stubs above are in place first.
 let useStore: (typeof import('./store'))['useStore']
@@ -127,7 +127,7 @@ describe('per-path write queue', () => {
 
   it('surfaces a failed write as saveError instead of swallowing it', async () => {
     seed({ 'a.md': 'a' })
-    inkwell.writeNote.mockResolvedValueOnce({ ok: false, error: 'ENOSPC: disk full' })
+    verso.writeNote.mockResolvedValueOnce({ ok: false, error: 'ENOSPC: disk full' })
     const st = useStore.getState()
     st.editNote('a.md', 'a2')
     await st.saveActive()
@@ -139,14 +139,14 @@ describe('per-path write queue', () => {
 
   it('re-queues a failed write so the next flush retries it', async () => {
     seed({ 'a.md': 'a' })
-    inkwell.writeNote.mockResolvedValueOnce({ ok: false, error: 'ENOSPC: disk full' })
+    verso.writeNote.mockResolvedValueOnce({ ok: false, error: 'ENOSPC: disk full' })
     const st = useStore.getState()
     st.editNote('a.md', 'a2')
     await st.saveActive() // fails — the edit must go back into the buffer
     expect(useStore.getState().dirty).toBe(true)
 
     await st.saveActive() // retry succeeds (default mock returns ok)
-    expect(inkwell.writeNote).toHaveBeenCalledTimes(2)
+    expect(verso.writeNote).toHaveBeenCalledTimes(2)
     // The failed attempt was a mockResolvedValueOnce (no log entry); the retry runs
     // the real mock and must carry the same text.
     const attempts = writeLog.filter((w) => w.path === 'a.md' && w.phase === 'end')
@@ -181,7 +181,7 @@ describe('renameNote', () => {
   it('retargets canvas file cards pointing at the old path', async () => {
     seed({ 'Old.md': 'x' })
     useStore.setState({ canvases: [{ path: 'Board.canvas', name: 'Board', mtime: 1 }] })
-    inkwell.readCanvas.mockResolvedValueOnce({
+    verso.readCanvas.mockResolvedValueOnce({
       nodes: [
         { id: 'n1', type: 'file', file: 'Old.md', x: 0, y: 0, width: 100, height: 80 },
         { id: 'n2', type: 'text', text: 'hi', x: 0, y: 0, width: 100, height: 80 }
@@ -189,8 +189,8 @@ describe('renameNote', () => {
       edges: []
     })
     await useStore.getState().renameNote('Old.md', 'New')
-    expect(inkwell.writeCanvas).toHaveBeenCalledTimes(1)
-    const doc = inkwell.writeCanvas.mock.calls[0][1] as { nodes: { file?: string }[] }
+    expect(verso.writeCanvas).toHaveBeenCalledTimes(1)
+    const doc = verso.writeCanvas.mock.calls[0][1] as { nodes: { file?: string }[] }
     expect(doc.nodes[0].file).toBe('New.md')
   })
 })

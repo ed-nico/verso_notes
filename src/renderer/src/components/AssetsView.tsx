@@ -27,7 +27,7 @@ export function AssetsView(): React.JSX.Element {
   const [sortKey, setSortKey] = useState<SortKey>('added')
   const [dir, setDir] = useState<'asc' | 'desc'>('desc')
 
-  const refresh = (): void => void window.inkwell.listAssets().then(setAssets)
+  const refresh = (): void => void window.verso.listAssets().then(setAssets)
   useEffect(refresh, [])
 
   const nameOf = (p: string): string => files.find((f) => f.path === p)?.name ?? p.replace(/\.md$/i, '')
@@ -71,7 +71,7 @@ export function AssetsView(): React.JSX.Element {
   // Trash an unused asset (recoverable) and drop it from the list.
   const removeAsset = async (a: AssetFile): Promise<void> => {
     if (!window.confirm(`Move “${a.name}” to the Trash?\n\nIt isn’t referenced by any note.`)) return
-    if (await window.inkwell.deleteAsset(a.path)) setAssets((prev) => prev.filter((x) => x.path !== a.path))
+    if (await window.verso.deleteAsset(a.path)) setAssets((prev) => prev.filter((x) => x.path !== a.path))
   }
 
   const caret = (k: SortKey): string => (sortKey === k ? (dir === 'asc' ? ' ▲' : ' ▼') : '')
