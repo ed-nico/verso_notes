@@ -1,8 +1,11 @@
-# Verso-Notes
+# Verso Notes
 
 **A local-first notebook for Markdown.** Verso is a desktop app that stores everything as plain `.md` files on your disk — a mesh of [Obsidian](https://obsidian.md) (document editing, wikilinks, graph) and [Logseq](https://logseq.com) (block outliner, backlinks, daily journal). No accounts, no cloud, no lock-in. Your notes are just files you own.
 
 <img width="3386" height="1992" alt="CleanShot 2026-06-27 at 07 13 15@2x" src="https://github.com/user-attachments/assets/3ca7340f-3476-40aa-9f4f-8cd0907bb42d" />
+
+- **Files first.** Plain Markdown on disk is the source of truth. No proprietary format, no lock-in.
+- **Local first.** It works fully offline. Bring your own sync (iCloud, Dropbox, Git, Syncthing…).
 
 ## Features
 
@@ -16,22 +19,13 @@
 - **🧩 Queries & templates** — `{{query …}}` blocks (`#tag`, `[[Page]]`, todo/done) and reusable note templates.
 - **📚 Multiple vaults** — open several folders and swap between them from the sidebar.
 - **🕸 Graph** — a force-directed graph of the whole vault, plus a compact local graph of the current note's neighbours.
+- **📝 Canvas/Whiteboard** - Like to have a different perspective, canvas has you covered.
 
 Everything is local. Per-vault data (like saved Bases) lives inside the vault itself, so moving or syncing the folder takes your setup with it.
 
 ## Works with your existing vault
 
 Point Verso at any folder of Markdown — including an existing **Obsidian** vault. It reads and writes the same plain `.md` files with YAML frontmatter and `[[wikilinks]]`, and keeps its own settings in a `.verso/` folder inside the vault, so it won't disturb your `.obsidian/` configuration. Nothing is imported or converted; quit Verso and your notes are exactly where they always were.
-
-<img width="2312" height="2004" alt="CleanShot 2026-06-27 at 07 14 36@2x" src="https://github.com/user-attachments/assets/0726cf8f-f039-4818-be0b-561343515ca9" />
-<img width="2794" height="1836" alt="CleanShot 2026-06-27 at 08 24 34@2x" src="https://github.com/user-attachments/assets/12e2dd83-c1f2-4699-b921-babb933ff84e" />
-<img width="1710" height="1368" alt="image" src="https://github.com/user-attachments/assets/cb1b2145-67d2-4396-9e69-57a3bb8ba6c9" />
-
-## Philosophy
-
-- **Files first.** Plain Markdown on disk is the source of truth. No database, no proprietary format, no lock-in.
-- **Local first.** It works fully offline. Bring your own sync (iCloud, Dropbox, Git, Syncthing…).
-- **Keyboard first.** The outliner, command menu, and quick switcher are built for speed.
 
 ## Install
 
@@ -65,6 +59,12 @@ npm run build:win    # or: package a Windows installer
 
 On first launch, click **Open a folder** and point it at your own Markdown folder.
 
+<img width="2312" height="2004" alt="CleanShot 2026-06-27 at 07 14 36@2x" src="https://github.com/user-attachments/assets/0726cf8f-f039-4818-be0b-561343515ca9" />
+
+<img width="2794" height="1836" alt="CleanShot 2026-06-27 at 08 24 34@2x" src="https://github.com/user-attachments/assets/12e2dd83-c1f2-4699-b921-babb933ff84e" />
+
+<img width="1710" height="1368" alt="image" src="https://github.com/user-attachments/assets/cb1b2145-67d2-4396-9e69-57a3bb8ba6c9" />
+
 ## Contributing
 
 Bug reports and ideas are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the dev setup, checks (`npm run typecheck` + `npm test`), and architecture notes.
@@ -77,13 +77,13 @@ Verso has **no telemetry, no analytics, no accounts, and no update pings**, and 
 
 Verso is in active development (currently `v0.1.x`) and pre-1.0 — expect rough edges and the occasional breaking change. Issues and ideas welcome.
 
-## Built with AI
-
-Full transparency: this app was largely written with AI assistance. I use Verso daily as my own notes app, and it works well for my needs — but treat it accordingly: keep backups of your vault (your notes are plain Markdown files, so any backup or sync tool works), and review the code at your free will — it's all here.
+No Mobile yet.
 
 <img width="2302" height="1962" alt="CleanShot 2026-06-27 at 07 15 01@2x" src="https://github.com/user-attachments/assets/02836a55-1fdc-466a-90dc-6f68a1273032" />
 
-No Mobile yet.
+## Built with AI
+
+Full transparency: this app was largely written with AI assistance. I use Verso daily as my own notes app, and it works well for my needs — but treat it accordingly: keep backups of your vault (your notes are plain Markdown files, so any backup or sync tool works), and review the code at your free will — it's all here.
 
 ## License
 
