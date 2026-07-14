@@ -42,6 +42,12 @@ export function parseTarget(raw: string): ParsedTarget {
  *  - A page containing "/" is treated as a full path from the workspace root.
  *  - Otherwise we match by basename; exact-case wins over case-insensitive,
  *    and the shortest path wins ties (closest to root).
+ *
+ * PARITY NOTE: VaultIndex.resolve implements the same rules plus frontmatter
+ * aliases. Alias-blindness is deliberately correct for this function's one
+ * indirect caller, rewriteLinks: an alias link (`[[Mara]]`) keeps resolving to
+ * the renamed note (its aliases travel with it), so it must NOT be rewritten.
+ * If you change resolution rules here, mirror them in VaultIndex.resolve.
  */
 export function resolvePage(page: string, allPaths: string[]): string | null {
   if (page === '') return null

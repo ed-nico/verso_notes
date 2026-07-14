@@ -160,3 +160,109 @@ describe('withContentChanges (incremental)', () => {
     expect(result).toBeNull()
   })
 })
+
+describe('unlinkedReferences hardening (2026-07 audit)', () => {
+  it('does not count a #tag carrying the name as a mention', () => {
+    const idx = index({
+      'Project.md': 'home',
+      'A.md': 'working on #Project today'
+    })
+    expect(idx.unlinkedReferences('Project.md')).toHaveLength(0)
+  })
+
+  it('does not count mentions inside fenced or inline code', () => {
+    const idx = index({
+      'Project.md': 'home',
+      'A.md': '```\nProject in code\n```\nand `Project` inline',
+      'B.md': 'real Project mention'
+    })
+    const sources = idx.unlinkedReferences('Project.md').map((r) => r.sourcePath)
+    expect(sources).toEqual(['B.md'])
+  })
+
+  it('does not count frontmatter values as mentions', () => {
+    const idx = index({
+      'Project.md': 'home',
+      'A.md': '---\ntitle: Project\n---\nnothing here'
+    })
+    expect(idx.unlinkedReferences('Project.md')).toHaveLength(0)
+  })
+
+  it('reports full-text line numbers (frontmatter offset applied)', () => {
+    const idx = index({
+      'Project.md': 'home',
+      'A.md': '---\ntitle: x\n---\n\nabout Project here'
+    })
+    const refs = idx.unlinkedReferences('Project.md')
+    expect(refs).toHaveLength(1)
+    expect(refs[0].line).toBe(4) // full-text index of the mention line
+  })
+})
+
+describe('backlink context per occurrence', () => {
+  it('gives each backlink row its own line when a source links twice', () => {
+    const idx = index({
+      'B.md': 'x',
+      'A.md': 'first [[B]]\nsecond [[B]] here'
+    })
+    const back = idx.backlinksFor('B.md')
+    expect(back).toHaveLength(2)
+    // Context is now the whole paragraph unit, but each row jumps to ITS line.
+    expect(back[0].context).toContain('first [[B]]')
+    expect(back[1].context).toContain('second [[B]] here')
+    expect(back[0].line).not.toBe(back[1].line)
+  })
+
+  it('skips code when finding context', () => {
+    const idx = index({
+      'B.md': 'x',
+      'A.md': '```\n[[B]]\n```\nreal [[B]] here'
+    })
+    const back = idx.backlinksFor('B.md')
+    expect(back).toHaveLength(1)
+    expect(back[0].context).toContain('real [[B]] here')
+    expect(back[0].context).not.toContain('```') // fences bound the paragraph unit
+  })
+})
+
+describe('graph asset embeds', () => {
+  it('does not create phantom nodes for image/pdf embeds', () => {
+    const idx = index({ 'A.md': '![[photo.png]] and [[Missing Note]] and [[doc.pdf]]' })
+    const g = idx.graph()
+    const phantoms = g.nodes.filter((n) => n.phantom).map((n) => n.name)
+    expect(phantoms).toEqual(['Missing Note'])
+  })
+})
+
+describe('block-level backlink context (Reflect round)', () => {
+  it('includes a list item children and its parent line', () => {
+    const idx = index({
+      'B.md': 'x',
+      'A.md': '- project\n  - talk to [[B]] tomorrow\n    - bring the doc\n- other'
+    })
+    const ctx = idx.backlinksFor('B.md')[0].context
+    expect(ctx).toContain('project') // parent line for orientation
+    expect(ctx).toContain('talk to [[B]] tomorrow')
+    expect(ctx).toContain('bring the doc') // child came along
+    expect(ctx).not.toContain('other') // sibling of the parent stays out
+  })
+
+  it('returns the whole paragraph, not one line', () => {
+    const idx = index({
+      'B.md': 'x',
+      'A.md': 'First sentence.\nThen we mention [[B]] here.\nAnd conclude.\n\nNext para.'
+    })
+    const ctx = idx.backlinksFor('B.md')[0].context
+    expect(ctx).toContain('First sentence.')
+    expect(ctx).toContain('And conclude.')
+    expect(ctx).not.toContain('Next para.')
+  })
+
+  it('caps very long units with an ellipsis', () => {
+    const long = ['- head [[B]]', ...Array.from({ length: 12 }, (_, i) => `  - child ${i}`)].join('\n')
+    const idx = index({ 'B.md': 'x', 'A.md': long })
+    const ctx = idx.backlinksFor('B.md')[0].context
+    expect(ctx.split('\n').length).toBeLessThanOrEqual(7)
+    expect(ctx).toContain('…')
+  })
+})

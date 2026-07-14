@@ -84,7 +84,12 @@ export interface Workspace {
 }
 
 /** Result of a disk write: `ok: true`, or `ok: false` with a human-readable error. */
-export type WriteResult = { ok: true } | { ok: false; error: string }
+export type WriteResult =
+  /** `conflictPath` is set when the write collided with an external change (sync
+   *  tool, another app): the app's version won the note's path and the other
+   *  version was preserved as a sibling conflict file. */
+  | { ok: true; conflictPath?: string }
+  | { ok: false; error: string }
 
 /** Events pushed from main -> renderer when files change on disk. */
 export type FileEvent =
@@ -150,4 +155,19 @@ export interface VersoApi {
   /** Add a word to the current vault's spellcheck ignore list. */
   addToDictionary: (word: string) => Promise<void>
   onFileEvent: (cb: (event: FileEvent) => void) => () => void
+  /** Print the current window (the open note, via print CSS) to a PDF chosen in
+   *  a save dialog. Resolves to the saved path, or null when cancelled/failed. */
+  exportPdf: (suggestedName: string) => Promise<string | null>
+  /** Manual update check against GitHub releases (single request, click-only). */
+  checkUpdates: () => Promise<{ current: string; latest: string; url: string } | null>
+  /** Copy the bundled demo vault into a writable location and open it. */
+  openDemoVault: () => Promise<Workspace | null>
+  /** Snapshots of a note in `.verso/history/`, newest first. */
+  listSnapshots: (path: string) => Promise<{ stamp: string; size: number }[]>
+  /** A snapshot's full text, or null if missing. */
+  readSnapshot: (path: string, stamp: string) => Promise<string | null>
+  /** Main asks the renderer to flush pending saves before the window closes. */
+  onFlushRequest: (cb: () => void) => () => void
+  /** Renderer signals main that the pre-close flush finished (window may close). */
+  flushDone: () => void
 }

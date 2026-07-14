@@ -166,6 +166,7 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
           role="link"
           tabIndex={0}
           onMouseDown={(e) => {
+            if (e.button !== 0) return // only left-click navigates
             e.preventDefault()
             e.stopPropagation()
             openLinkTarget(url)
@@ -200,6 +201,7 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
             tabIndex={0}
             title={`${rawPage} · ${entityType} — click to expand`}
             onMouseDown={(e) => {
+              if (e.button !== 0) return // only left-click acts
               e.preventDefault()
               e.stopPropagation()
               if (e.metaKey || e.ctrlKey) opts.onNavigate(linkPart, true)
@@ -226,6 +228,7 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
             role="link"
             tabIndex={0}
             onMouseDown={(e) => {
+              if (e.button !== 0) return // only left-click navigates
               e.preventDefault()
               e.stopPropagation()
               opts.onNavigate(linkPart, e.metaKey || e.ctrlKey)
@@ -266,6 +269,7 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
           onMouseDown={
             opts.onTag
               ? (e) => {
+                  if (e.button !== 0) return // only left-click opens the tag
                   e.preventDefault()
                   e.stopPropagation()
                   opts.onTag!(tag)
@@ -304,6 +308,7 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
           tabIndex={0}
           title={href}
           onMouseDown={(e) => {
+            if (e.button !== 0) return // only left-click navigates
             e.preventDefault()
             e.stopPropagation()
             openLinkTarget(href)

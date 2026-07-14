@@ -1,7 +1,18 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore, EDITOR_FONTS, EDITOR_SIZES, ACCENTS } from '../store'
 
 export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
+  // Update check state: null = not checked, false = unreachable, object = result.
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; url: string } | null | false>(null)
+  const [checking, setChecking] = useState(false)
+  const runUpdateCheck = async (): Promise<void> => {
+    setChecking(true)
+    try {
+      setUpdateInfo((await window.verso.checkUpdates()) ?? false)
+    } finally {
+      setChecking(false)
+    }
+  }
   const workspace = useStore((s) => s.workspace)
   const openWorkspace = useStore((s) => s.openWorkspace)
   const theme = useStore((s) => s.theme)
@@ -135,6 +146,32 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             When you paste a bare URL, Verso fetches that page once to turn it into a titled
             link. This is the only feature that makes a network request by itself — turn it
             off and pasted URLs stay as-is.
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-label">Updates</div>
+          <button className="btn" disabled={checking} onClick={() => void runUpdateCheck()}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+          {updateInfo && (
+            <div className="settings-hint">
+              {updateInfo.latest === updateInfo.current ? (
+                <>You're on the latest version ({updateInfo.current}).</>
+              ) : (
+                <>
+                  Version {updateInfo.latest} is available (you have {updateInfo.current}) —{' '}
+                  <a href={updateInfo.url} target="_blank" rel="noreferrer">
+                    open the releases page
+                  </a>
+                  .
+                </>
+              )}
+            </div>
+          )}
+          {updateInfo === false && <div className="settings-hint">Couldn't reach GitHub — try again later.</div>}
+          <div className="settings-hint">
+            One request to GitHub, only when you click — Verso never checks automatically.
           </div>
         </div>
       </div>

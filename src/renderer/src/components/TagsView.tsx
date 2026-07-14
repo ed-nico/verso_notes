@@ -145,6 +145,11 @@ export function TagsView(): React.JSX.Element {
     <div className="scroll-area">
       <div className="doc tags-doc">
         <h1>Tags</h1>
+        {tags.length === 0 && (
+          <p className="empty-note">
+            No tags yet — add #tags to your notes (or create a supertag below) and they'll gather here.
+          </p>
+        )}
         <div className="tag-cloud">
           <button className={'tag-chip' + (activeTag === null ? ' active' : '')} onClick={() => openTag(null)}>
             All

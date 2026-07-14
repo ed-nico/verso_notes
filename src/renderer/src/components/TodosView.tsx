@@ -19,14 +19,23 @@ function Group({ title, todos, showDate }: { title: string; todos: Todo[]; showD
 }
 
 export function TodosView(): React.JSX.Element {
-  const texts = useStore((s) => s.texts)
+  // Recompute on the debounced index rebuild, NOT on `texts`: the texts map is
+  // mutated in place on the typing hot path (same identity), so a [texts] memo
+  // both goes stale after edits and re-scans the vault when it does fire. The
+  // index identity changes exactly when derived state should refresh, and
+  // aggregateTodos is per-note cached, so each refresh is O(changed notes).
+  const index = useStore((s) => s.index)
   const today = todayISO()
   const [showDone, setShowDone] = useState(false)
 
-  const { overdueG, todayG, upcoming, someday, done } = useMemo(() => {
+  const { overdueG, backlogG, todayG, upcoming, someday, done } = useMemo(() => {
+    const texts = useStore.getState().texts
     const all = aggregateTodos(Object.entries(texts).map(([path, text]) => ({ path, text })))
     const open = all.filter((t) => !t.checked)
-    const overdueG = sortByDate(open.filter((t) => t.date && t.date < today))
+    // Only EXPLICIT dates make a task overdue; a bare checkbox in an old daily
+    // note is backlog, not lateness (it would otherwise drown real deadlines).
+    const overdueG = sortByDate(open.filter((t) => t.explicit && t.date && t.date < today))
+    const backlogG = sortByDate(open.filter((t) => !t.explicit && t.date && t.date < today))
     const todayG = open.filter((t) => t.date === today)
     const future = sortByDate(open.filter((t) => t.date && t.date > today))
     // group upcoming by date
@@ -38,10 +47,15 @@ export function TodosView(): React.JSX.Element {
     }
     const someday = open.filter((t) => !t.date)
     const done = all.filter((t) => t.checked)
-    return { overdueG, todayG, upcoming, someday, done }
-  }, [texts, today])
+    return { overdueG, backlogG, todayG, upcoming, someday, done }
+  }, [index, today])
 
-  const total = overdueG.length + todayG.length + upcoming.reduce((n, g) => n + g.todos.length, 0) + someday.length
+  const total =
+    overdueG.length +
+    backlogG.length +
+    todayG.length +
+    upcoming.reduce((n, g) => n + g.todos.length, 0) +
+    someday.length
 
   return (
     <div className="scroll-area">
@@ -61,6 +75,7 @@ export function TodosView(): React.JSX.Element {
           <Group key={g.date} title={formatLong(g.date)} todos={g.todos} />
         ))}
         <Group title="Someday" todos={someday} />
+        <Group title="From older journals" todos={backlogG} showDate />
         {showDone && <Group title="Completed" todos={done} showDate />}
       </div>
     </div>

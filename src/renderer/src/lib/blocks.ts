@@ -19,6 +19,8 @@ export interface Block {
   /** Original ordered-list number (e.g. the 3 in `3. item`), re-emitted on save. */
   ordinal?: number
   lang?: string
+  /** Fence marker character for code blocks (` or ~), so `~~~` fences round-trip. */
+  fence?: '`' | '~'
   /** Obsidian-style `^block-anchor` id, kept out of the editable text but re-appended on save. */
   anchor?: string
   collapsed: boolean
@@ -66,9 +68,21 @@ export function parseBlocks(text: string): ParsedDoc {
   if (lines[0]?.trim() === '---') {
     for (let j = 1; j < lines.length; j++) {
       if (lines[j].trim() === '---') {
-        frontmatter = lines.slice(0, j + 1).join('\n') + '\n'
-        i = j + 1
-        if (lines[i]?.trim() === '') i++
+        // Only a mapping-shaped block is frontmatter (mirrors parseFrontmatter's
+        // rule): every non-blank line indented / comment / list item / `key:`.
+        // Prose after a leading `---` hr must stay in the body, not vanish.
+        let shaped = true
+        for (let k = 1; k < j; k++) {
+          const l = lines[k]
+          if (l.trim() === '' || /^[\s#-]/.test(l) || l.includes(':')) continue
+          shaped = false
+          break
+        }
+        if (shaped) {
+          frontmatter = lines.slice(0, j + 1).join('\n') + '\n'
+          i = j + 1
+          if (lines[i]?.trim() === '') i++
+        }
         break
       }
     }
@@ -108,14 +122,17 @@ export function parseBlocks(text: string): ParsedDoc {
 
     const fence = line.match(FENCE_RE)
     if (fence) {
+      const marker = fence[1][0] as '`' | '~'
       const body: string[] = []
       i++
-      while (i < lines.length && !lines[i].match(FENCE_RE)) {
+      // The closing fence must use the SAME marker character — a ``` fence
+      // containing ~~~ lines (or vice versa) must not close early.
+      while (i < lines.length && lines[i].match(FENCE_RE)?.[1][0] !== marker) {
         body.push(lines[i])
         i++
       }
       i++
-      push(makeBlock({ type: 'code', text: body.join('\n'), lang: fence[2].trim() }))
+      push(makeBlock({ type: 'code', text: body.join('\n'), lang: fence[2].trim(), fence: marker }))
       continue
     }
 
@@ -185,21 +202,23 @@ export function parseBlocks(text: string): ParsedDoc {
 // Serialization
 // ---------------------------------------------------------------------------
 
-function serializeBlock(b: Block): string {
+function serializeBlock(b: Block, ordinal?: number): string {
   // A preserved `^anchor` goes back at the very end of the block's markdown.
   const anchor = b.anchor && b.type !== 'code' && b.type !== 'table' ? ` ^${b.anchor}` : ''
   switch (b.type) {
     case 'heading':
       return `${'#'.repeat(b.level || 1)} ${b.text}${anchor}`
-    case 'code':
-      return `\`\`\`${b.lang ?? ''}\n${b.text}\n\`\`\``
+    case 'code': {
+      const f = (b.fence ?? '`').repeat(3)
+      return `${f}${b.lang ?? ''}\n${b.text}\n${f}`
+    }
     case 'table':
       return b.text
     case 'bullet':
     case 'task': {
       const pad = '  '.repeat(b.level)
       const marker =
-        b.type === 'task' ? `- [${b.checked ? 'x' : ' '}] ` : b.ordered ? `${b.ordinal ?? 1}. ` : '- '
+        b.type === 'task' ? `- [${b.checked ? 'x' : ' '}] ` : b.ordered ? `${ordinal ?? b.ordinal ?? 1}. ` : '- '
       const [first, ...rest] = b.text.split('\n')
       return [`${pad}${marker}${first}`, ...rest.map((l) => `${pad}  ${l}`)].join('\n') + anchor
     }
@@ -208,11 +227,36 @@ function serializeBlock(b: Block): string {
   }
 }
 
+/**
+ * Sequential numbers for ordered-list items (id → number), counting consecutive
+ * ordered siblings per level — the same numbering the editor DISPLAYS, so what's
+ * written to disk can't diverge from what the user sees after splits/moves.
+ */
+export function orderedNumbers(blocks: Block[]): Map<number, number> {
+  const out = new Map<number, number>()
+  const counters: number[] = []
+  for (const b of blocks) {
+    if (!isList(b)) {
+      counters.length = 0
+      continue
+    }
+    counters.length = b.level + 1
+    if (b.type === 'bullet' && b.ordered) {
+      counters[b.level] = (counters[b.level] ?? 0) + 1
+      out.set(b.id, counters[b.level])
+    } else {
+      counters[b.level] = 0 // an unordered/task sibling restarts numbering
+    }
+  }
+  return out
+}
+
 export function serializeBlocks(blocks: Block[], frontmatter = ''): string {
+  const nums = orderedNumbers(blocks)
   let body = ''
   for (let i = 0; i < blocks.length; i++) {
     if (i > 0) body += isList(blocks[i - 1]) && isList(blocks[i]) ? '\n' : '\n\n'
-    body += serializeBlock(blocks[i])
+    body += serializeBlock(blocks[i], nums.get(blocks[i].id))
   }
   return frontmatter ? `${frontmatter}${body}\n` : `${body}\n`
 }

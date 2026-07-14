@@ -20,8 +20,9 @@
  * without either are excluded by before:/after:.
  */
 import { frontmatterTags, parseFrontmatter } from './frontmatter'
-import { parseLooseDate, dailyDateOf } from './dates'
+import { isValidISO, parseLooseDate, dailyDateOf } from './dates'
 import { parseTarget } from './links'
+import { codeRanges, inRanges } from './md'
 import { TAG_RE } from './parse'
 
 export interface QueryBlock {
@@ -72,7 +73,6 @@ export interface QuerySpec {
 const WIKI_RE = /\[\[([^\]\n]+?)\]\]/g
 const ANCHOR_RE = /\s\^([A-Za-z0-9][A-Za-z0-9-]*)\s*$/
 const TASK_RE = /^\s*([-*+])\s+\[([ xX])\]\s+/
-const FENCE_RE = /^(```|~~~)/
 
 export function parseQuery(raw: string): QuerySpec {
   // Pull [[Page Name]] out first (they may contain spaces), keeping a possible
@@ -119,7 +119,9 @@ function parseToken(tok: string, links: { negated: boolean; page: string }[]): A
   const date = /^(before|after):(.+)$/i.exec(tok)
   if (date) {
     const iso = parseLooseDate(date[2])
-    if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    // isValidISO (not just shape) — `before:2026-13-45` must not become a date
+    // atom that string-compares as "all of 2026".
+    if (isValidISO(iso)) {
       return { kind: 'date', negated, value: '', dateOp: date[1].toLowerCase() as 'before' | 'after', dateValue: iso }
     }
     // An unparseable date falls through to a plain word match.
@@ -176,9 +178,9 @@ function noteDate(path: string, data: Record<string, unknown>): string | undefin
   const raw = data.date
   if (raw === undefined || raw === null) return undefined
   const s = String(raw).trim()
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10) // ISO date or datetime
+  if (isValidISO(s.slice(0, 10))) return s.slice(0, 10) // ISO date or datetime
   const loose = parseLooseDate(s)
-  return /^\d{4}-\d{2}-\d{2}$/.test(loose) ? loose : undefined
+  return isValidISO(loose) ? loose : undefined
 }
 
 function scanBlocksUncached(path: string, name: string, text: string): QueryBlock[] {
@@ -186,14 +188,18 @@ function scanBlocksUncached(path: string, name: string, text: string): QueryBloc
   const date = noteDate(path, data)
   const lines = body.split('\n')
   const out: QueryBlock[] = []
-  let inFence = false
+  // Code detection defers to the shared `codeRanges` oracle — a private fence
+  // scanner here had already drifted from it (mixed ```/~~~ markers, inline
+  // spans), so queries could find tags the tag index says don't exist.
+  const skip = codeRanges(body)
+  let offset = 0
   for (let i = 0; i < lines.length; i++) {
     const raw = lines[i]
-    if (FENCE_RE.test(raw.trim())) {
-      inFence = !inFence
-      continue
-    }
-    if (inFence || raw.trim() === '') continue
+    const lineStart = offset
+    offset += raw.length + 1
+    if (raw.trim() === '') continue
+    // Skip lines inside fenced code (including the fence markers themselves).
+    if (inRanges(lineStart + raw.search(/\S/), skip)) continue
     const t = clean(raw)
     if (!t) continue
     // A {{query}} block must never match itself (or another query) — skip them.
@@ -203,9 +209,13 @@ function scanBlocksUncached(path: string, name: string, text: string): QueryBloc
     const links: string[] = []
     let m: RegExpExecArray | null
     TAG_RE.lastIndex = 0
-    while ((m = TAG_RE.exec(raw))) tags.push(m[2].toLowerCase())
+    while ((m = TAG_RE.exec(raw))) {
+      if (!inRanges(lineStart + m.index, skip)) tags.push(m[2].toLowerCase())
+    }
     WIKI_RE.lastIndex = 0
-    while ((m = WIKI_RE.exec(raw))) links.push(parseTarget(m[1].split('|')[0]).page.toLowerCase())
+    while ((m = WIKI_RE.exec(raw))) {
+      if (!inRanges(lineStart + m.index, skip)) links.push(parseTarget(m[1].split('|')[0]).page.toLowerCase())
+    }
     out.push({
       path,
       name,

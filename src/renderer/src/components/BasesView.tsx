@@ -28,6 +28,10 @@ export function BasesView(): React.JSX.Element {
     setEditing(true)
   }
   const remove = (id: string): void => {
+    // Confirm like note/asset deletion does — a base can hold a lot of filter/
+    // column config, and (unlike notes) there is no Trash to recover it from.
+    const name = bases.find((b) => b.id === id)?.name ?? 'this base'
+    if (!window.confirm(`Delete “${name}”? Its filters and columns can't be recovered.`)) return
     setBases(bases.filter((b) => b.id !== id))
     setEditing(false)
   }

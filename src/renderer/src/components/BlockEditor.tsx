@@ -19,8 +19,10 @@ import {
   normTag,
   resolveFields,
   supertagsForNote,
-  supertagsFromParsed
+  supertagsFromParsed,
+  TAGS_DIR
 } from '../lib/supertags'
+import { dateSuggestions, formatLong } from '../lib/dates'
 import { QueryView } from './QueryView'
 import { BaseEmbed } from './BaseView'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
@@ -400,6 +402,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     lastCoalesceKey.current = coalesceKey ?? null
     const body = serializeBlocks(next, '')
     lastBodyRef.current = body
+    lastRawBodyRef.current = null // a local edit invalidates the consumed-disk marker
     setBlocks(next)
     useStore.getState().setNoteBody(path, body)
   }
@@ -412,6 +415,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     lastCoalesceKey.current = null
     const body = serializeBlocks(snap.blocks, '')
     lastBodyRef.current = body
+    lastRawBodyRef.current = null // a local edit invalidates the consumed-disk marker
     setBlocks(snap.blocks)
     useStore.getState().setNoteBody(path, body)
     applySel(snap.sel)
@@ -509,14 +513,28 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // Re-sync when the note's text changes underneath us (file watcher, or an
   // anchor minted by `((`/`@` in another pane) — but never while actively editing.
   const externalText = useStore((s) => s.texts[path] ?? '')
+  // The exact RAW body this editor last consumed from disk. Needed because the
+  // raw text often differs from its normalized serialization (blank lines
+  // between bullets, renumbered lists — journal/template notes especially), so
+  // the lastBodyRef comparison alone re-fires on every `editingId` change and
+  // would kick the user straight back out of editing. Local edits null it (a
+  // subsequent identical-looking disk text is then a REAL external change).
+  const lastRawBodyRef = useRef<string | null>(null)
   useEffect(() => {
     const body = parseFrontmatter(externalText).body
     if (lastBodyRef.current !== null && body.trim() === lastBodyRef.current.trim()) return
-    if (editingId !== null) return // don't clobber an in-progress edit
+    if (body === lastRawBodyRef.current) return // already consumed this exact disk text
+    // Only an UNSAVED buffer blocks the re-sync. Merely having a block focused
+    // must not: a sync change landing then would be silently overwritten by the
+    // next keystroke's serialize — with no conflict detected, because the store
+    // already read (and thereby acknowledged) the new disk content.
+    if (editingId !== null && useStore.getState().hasPendingEdit(path)) return
+    lastRawBodyRef.current = body
     const parsed = parseBlocks(externalText)
     const nb = parsed.blocks.length ? parsed.blocks : [makeBlock()]
     lastBodyRef.current = serializeBlocks(nb, '')
     setBlocks(nb)
+    setEditingId(null) // the re-parse minted new ids; the old focus target is gone
     setSelIds(new Set())
     // The re-parse mints new block ids, so prior undo snapshots no longer apply —
     // drop them rather than let undo restore stale content after an external change.
@@ -595,7 +613,9 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     if (!idxs.length) return
     const sel = idxs.map((i) => blocks[i])
     const md = serializeBlocks(sel, '').replace(/\n+$/, '')
-    blockClip.set(sel, md) // structured copy (keeps anchors) alongside the text
+    // Structured copy alongside the text. A CUT carries its anchors (the block is
+    // moving); a plain COPY strips them — pasting would duplicate the anchor id.
+    blockClip.set(cut ? sel : sel.map((b) => ({ ...b, anchor: undefined })), md)
     void navigator.clipboard?.writeText(md)
     if (cut) deleteSelected()
   }
@@ -610,7 +630,10 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         level: sb.level,
         checked: sb.checked,
         ordered: sb.ordered,
+        ordinal: sb.ordinal,
         lang: sb.lang,
+        fence: sb.fence,
+        anchor: sb.anchor, // blockClip strips anchors on copy; a cut keeps them
         collapsed: false
       })
     )
@@ -655,7 +678,10 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         level: p.level,
         checked: p.checked,
         ordered: p.ordered,
-        lang: p.lang
+        ordinal: p.ordinal,
+        lang: p.lang,
+        fence: p.fence,
+        anchor: p.anchor
       })
     )
     // Keep any text typed before/after the caret around the pasted blocks.
@@ -790,6 +816,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   }
 
   const onRowMouseDown = (b: Block, e: React.MouseEvent): void => {
+    if (e.button !== 0) return // right/middle-click must not flip the row into edit mode
     if (e.shiftKey) {
       // Extend a block selection from the anchor to the clicked row.
       e.preventDefault()
@@ -808,6 +835,11 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     // Land the caret where the click fell; clicking the empty area past the text → end.
     const off = caretOffsetAt(e.currentTarget as HTMLElement, e.clientX, e.clientY)
     pendingCaret.current = { id: b.id, pos: off === null ? 'end' : Math.min(off, b.text.length) }
+    // We place the caret ourselves — suppress the browser's default mousedown
+    // focusing, which would otherwise fire AFTER React focuses the freshly
+    // mounted textarea and hand focus to the outliner container instead (the
+    // first click then eats keystrokes until a second click).
+    e.preventDefault()
   }
 
   // Clicking the empty space below the last block puts the caret at the end — reusing a
@@ -1194,16 +1226,18 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // Expand any collapsed ancestors so a matched block is actually visible before we jump.
   const revealBlock = (idx: number): void => {
     setBlocks((prev) => {
+      // An ancestor is any collapsed block whose foldable section CONTAINS idx —
+      // childrenRange handles headings (whose sections span level-0 paragraphs)
+      // and list subtrees alike; raw level math conflates the two and misses
+      // matches hidden under a collapsed heading.
       let changed = false
       const next = [...prev]
-      let need = prev[idx]?.level ?? 0
-      for (let i = idx - 1; i >= 0 && need > 0; i--) {
-        if (next[i].level < need) {
-          if (next[i].collapsed) {
-            next[i] = { ...next[i], collapsed: false }
-            changed = true
-          }
-          need = next[i].level
+      for (let i = 0; i < idx; i++) {
+        if (!next[i].collapsed) continue
+        const [s, e] = childrenRange(next, i)
+        if (idx >= s && idx < e) {
+          next[i] = { ...next[i], collapsed: false }
+          changed = true
         }
       }
       return changed ? next : prev
@@ -1343,6 +1377,21 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     const next = cloneBlocks(blocks)
     const pIdx = indexOfBlock(next, prevId)
     const cIdx = indexOfBlock(next, id)
+    // Never glue paragraph text onto a code/table body — it corrupts the block
+    // (e.g. `| a | b |hello`). If the paragraph is empty, delete it and step into
+    // the block above; otherwise just move the caret there and keep both blocks.
+    if (next[pIdx].type === 'code' || next[pIdx].type === 'table') {
+      if (next[cIdx].text === '') {
+        next.splice(cIdx, 1)
+        setEditingId(prevId)
+        pendingCaret.current = { id: prevId, pos: 'end' }
+        commit(next)
+      } else {
+        setEditingId(prevId)
+        pendingCaret.current = { id: prevId, pos: 'end' }
+      }
+      return
+    }
     const joinPos = next[pIdx].text.length
     next[pIdx] = { ...next[pIdx], text: next[pIdx].text + next[cIdx].text }
     next.splice(cIdx, 1)
@@ -1386,12 +1435,14 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // ---- assets ----
   const insertAssetBlocks = (afterId: number, mds: string[]): void => {
     if (!mds.length) return
-    const next = cloneBlocks(blocks)
+    // blocksRef, not the render closure: this runs after `await saveAsset` — words
+    // typed during the await must not be reverted by a stale snapshot.
+    const next = cloneBlocks(blocksRef.current)
     const idx = indexOfBlock(next, afterId)
     const fresh = mds.map((md) => makeBlock({ type: 'paragraph', text: md }))
     if (idx >= 0) next.splice(idx + 1, 0, ...fresh)
     else next.push(...fresh)
-    commit(next)
+    commitRef.current(next) // latest commit closure — the render one may be stale too
   }
   const handleFiles = async (files: FileList, afterId: number): Promise<void> => {
     const mds: string[] = []
@@ -1461,6 +1512,16 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       }
       return rows
     }
+    // Natural-language dates first: `[[tomo`, `[[next friday`, `[[3 days ago` →
+    // the resolved daily note (inserting the ISO name, which navigates as a
+    // journal day whether or not the note exists yet).
+    const dateHits: AcSuggestion[] = dateSuggestions(state.query).map((d) => ({
+      key: `date:${d.iso}`,
+      label: d.label,
+      icon: '☼',
+      sub: `${formatLong(d.iso)} — daily note`,
+      insert: d.iso
+    }))
     const nameCounts = new Map<string, number>()
     for (const f of files) nameCounts.set(f.name.toLowerCase(), (nameCounts.get(f.name.toLowerCase()) ?? 0) + 1)
     const fileHits = files
@@ -1483,7 +1544,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       .filter((a) => a.alias.toLowerCase().includes(q))
       .slice(0, 4)
       .map((a) => ({ key: `alias:${a.alias}`, label: a.alias, icon: '[[ ]]', sub: `→ ${a.name}`, insert: a.alias }))
-    return [...fileHits, ...aliasHits].slice(0, 10)
+    return [...dateHits, ...fileHits, ...aliasHits].slice(0, 10)
   }
   // Recomputed only when the popup or its inputs change; onKeyDown and the row popup
   // both read this instead of re-scanning all files on every render.
@@ -1513,7 +1574,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       replaceText(id, completed + after)
       return
     }
-    if (item.insert === undefined) return // placeholder row (e.g. "No templates")
+    if (item.insert === undefined) return setAc(null) // placeholder row — close so Enter isn't swallowed forever
     const ta = taRefs.current.get(id)
     if (!ta) return
     const pos = ta.selectionStart
@@ -1568,7 +1629,9 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       })
     }
     const add = parseBlocks(body).blocks
-    const next = cloneBlocks(blocks)
+    // blocksRef, not the render closure: readNote/setNoteProperties awaited above —
+    // words typed while the template loaded must not be reverted.
+    const next = cloneBlocks(blocksRef.current)
     const idx = indexOfBlock(next, id)
     if (idx < 0) return
     if (!add.length) {
@@ -1580,7 +1643,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       pendingCaret.current = { id: last.id, pos: 'end' }
       setEditingId(last.id)
     }
-    commit(next)
+    commitRef.current(next) // latest commit closure — the render one may be stale too
   }
 
   const onChange = (b: Block, e: React.ChangeEvent<HTMLTextAreaElement>): void => {
@@ -1800,7 +1863,9 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         patchById(b.id, { type: 'code', lang: fence[1], text: '' }, 0)
         return
       }
-      insertAfter(b.id, val.slice(0, pos), val.slice(pos))
+      // A selection is REPLACED by Enter (standard editor behavior): the selected
+      // text belongs to neither side of the split.
+      insertAfter(b.id, val.slice(0, pos), val.slice(ta.selectionEnd))
     } else if (e.key === 'Tab') {
       e.preventDefault()
       if (isList(b)) (e.shiftKey ? outdent : indent)(b.id, pos)
@@ -1876,6 +1941,22 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
 
   // The find match currently being cycled to (for in-place highlighting).
   const activeMatch = find && find.idx >= 0 && find.idx < matches.length ? matches[find.idx] : null
+
+  // Selection HIGHLIGHT mirrors selection SEMANTICS: operations on a selected
+  // block take its whole subtree (selectedIndices), so the subtree must light up
+  // too — otherwise Backspace on a selected heading silently deletes a section
+  // of which only one row looked selected.
+  const selWithSubtrees = useMemo(() => {
+    if (!selIds.size) return selIds
+    const out = new Set(selIds)
+    for (const id of selIds) {
+      const i = indexOfBlock(blocks, id)
+      if (i < 0) continue
+      const [s, e] = childrenRange(blocks, i)
+      for (let k = s; k < e; k++) out.add(blocks[k].id)
+    }
+    return out
+  }, [selIds, blocks])
 
   // Render a block's text with the active find match wrapped in <mark>, keeping inline
   // markdown around it. Used for plain-text blocks (callers skip code/table).
@@ -2007,12 +2088,22 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // edits to non-table blocks), stored in the note's `_tableWidths` frontmatter.
   const tableOrdinal = (index: number): number =>
     blocks.slice(0, index).filter((x) => x.type === 'table').length
-  const tableWidthsFor = (index: number): number[] | undefined => {
-    const fm = parseFrontmatter(useStore.getState().texts[path] ?? '').data as {
-      _tableWidths?: Record<string, number[]>
-    }
-    return fm._tableWidths?.[tableOrdinal(index)]
-  }
+  // Parsed once per frontmatter CHANGE — body keystrokes leave the fm block string
+  // identical, and a full YAML parse per table per render is real work.
+  const fmRaw = ((): string => {
+    if (!externalText.startsWith('---')) return ''
+    const end = externalText.indexOf('\n---', 3)
+    return end === -1 ? '' : externalText.slice(0, end + 4)
+  })()
+  const tableWidthsMap = useMemo(
+    () =>
+      (parseFrontmatter(useStore.getState().texts[path] ?? '').data as {
+        _tableWidths?: Record<string, number[]>
+      })._tableWidths,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fmRaw, path]
+  )
+  const tableWidthsFor = (index: number): number[] | undefined => tableWidthsMap?.[tableOrdinal(index)]
 
   /** Zoom into a list item (bullet/number click) and start editing it. */
   const zoomInto = (id: number): void => {
@@ -2056,9 +2147,39 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
 
   // Bumped when vault-wide data changes so cached rows refresh link resolution,
   // entity chips, and spell squiggles; typing in one block leaves the rest cached.
+  // Crucially NOT bumped when the only change is this note's own body reparse
+  // (the debounced rebuild ~200ms after each pause in typing) — that used to
+  // re-render every visible row continuously while writing, defeating the memo.
+  // Foreign parses, file-set changes, alias changes (they shift resolution), and
+  // edits to a supertag definition (they restyle entity chips) still bump.
   const dataTickRef = useRef(0)
+  const prevTickDeps = useRef({ parsed, files, spellTick })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const dataTick = useMemo(() => ++dataTickRef.current, [parsed, files, index, spellTick])
+  const dataTick = useMemo(() => {
+    const prev = prevTickDeps.current
+    prevTickDeps.current = { parsed, files, spellTick }
+    if (prev.files === files && prev.spellTick === spellTick && !path.startsWith(TAGS_DIR + '/')) {
+      let foreign = false
+      for (const k in parsed) {
+        if (k !== path && parsed[k] !== prev.parsed[k]) {
+          foreign = true
+          break
+        }
+      }
+      if (!foreign) {
+        for (const k in prev.parsed) {
+          if (!(k in parsed)) {
+            foreign = true
+            break
+          }
+        }
+      }
+      const aliasesSame =
+        JSON.stringify(parsed[path]?.aliases ?? []) === JSON.stringify(prev.parsed[path]?.aliases ?? [])
+      if (!foreign && aliasesSame) return dataTickRef.current
+    }
+    return ++dataTickRef.current
+  }, [parsed, files, index, spellTick])
 
   // Zoom: restrict to a block + its section, rebasing indent. Memoized because
   // visibleBlocks() is an O(n) scan and this sits in the per-keystroke render path.
@@ -2180,7 +2301,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
           index={r.index}
           depth={r.depth}
           foldable={foldableAt(blocks, r.index)}
-          selected={selIds.has(r.block.id)}
+          selected={selWithSubtrees.has(r.block.id)}
           isEditing={editingId === r.block.id}
           orderedLbl={r.block.type === 'bullet' && r.block.ordered ? orderedLabel(blocks, r.index) : null}
           tableWidths={r.block.type === 'table' ? tableWidthsFor(r.index) : undefined}

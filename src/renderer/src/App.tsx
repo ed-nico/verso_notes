@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useStore, EDITOR_FONTS, ACCENTS, type SidePane } from './store'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useStore, templatesFromFiles, EDITOR_FONTS, ACCENTS, type SidePane } from './store'
 import { Sidebar } from './components/Sidebar'
 import { Backlinks } from './components/Backlinks'
 import { GraphView } from './components/GraphView'
@@ -11,8 +11,10 @@ import { NoteTitle } from './components/NoteTitle'
 import { PropertiesPanel } from './components/PropertiesPanel'
 import { LocalGraph } from './components/LocalGraph'
 import { TableOfContents } from './components/TableOfContents'
+import { SimilarNotes } from './components/SimilarNotes'
 import { JournalView } from './components/JournalView'
 import { Calendar } from './components/Calendar'
+import { HistoryPanel } from './components/HistoryPanel'
 import { TodosView } from './components/TodosView'
 import { CommandPalette } from './components/CommandPalette'
 import { Settings } from './components/Settings'
@@ -30,6 +32,7 @@ const CanvasView = lazy(() => import('./components/CanvasView').then((m) => ({ d
 
 function Welcome(): React.JSX.Element {
   const openWorkspace = useStore((s) => s.openWorkspace)
+  const openDemoVault = useStore((s) => s.openDemoVault)
   return (
     <div className="welcome">
       <h1>Verso</h1>
@@ -39,6 +42,9 @@ function Welcome(): React.JSX.Element {
       </p>
       <button className="btn" onClick={() => void openWorkspace()}>
         Open a folder
+      </button>
+      <button className="btn ghost" onClick={() => void openDemoVault()}>
+        Try the demo vault
       </button>
     </div>
   )
@@ -70,7 +76,16 @@ function TopBar(): React.JSX.Element {
   const toggleRightbar = useStore((s) => s.toggleRightbar)
   const revealNote = useStore((s) => s.revealNote)
   const deleteNote = useStore((s) => s.deleteNote)
+  const togglePin = useStore((s) => s.togglePin)
+  const duplicateNote = useStore((s) => s.duplicateNote)
+  const applyTemplateToNote = useStore((s) => s.applyTemplateToNote)
+  const isPinned = useStore(
+    (s) => !!(s.activePath && (s.parsed[s.activePath]?.frontmatter as { pinned?: unknown } | undefined)?.pinned)
+  )
   const [pageMenu, setPageMenu] = useState<{ x: number; y: number } | null>(null)
+  const [tplMenu, setTplMenu] = useState<{ x: number; y: number } | null>(null)
+  const [historyFor, setHistoryFor] = useState<string | null>(null)
+  const templates = useMemo(() => templatesFromFiles(files), [files])
 
   const nameOf = (p: string): string => files.find((f) => f.path === p)?.name ?? p.replace(/\.md$/i, '')
   const title = view === 'editor' ? (activePath ? nameOf(activePath) : 'No note') : VIEW_TITLE[view]
@@ -129,7 +144,16 @@ function TopBar(): React.JSX.Element {
         <ContextMenu
           x={pageMenu.x}
           y={pageMenu.y}
+          // Parity with the sidebar's right-click menu — with the sidebar hidden
+          // (⌘\), this is the only way to reach these actions.
           items={[
+            { label: isPinned ? 'Unpin' : 'Pin to top', onClick: () => void togglePin(activePath) },
+            ...(templates.length
+              ? [{ label: '▤ Apply template…', onClick: () => setTplMenu({ x: pageMenu.x, y: pageMenu.y }) }]
+              : []),
+            { label: 'Duplicate', onClick: () => void duplicateNote(activePath) },
+            { label: '↺ History…', onClick: () => setHistoryFor(activePath) },
+            { label: '⤓ Export as PDF…', onClick: () => void exportActivePdf(activePath, nameOf(activePath)) },
             { label: REVEAL_LABEL, onClick: () => void revealNote(activePath) },
             {
               label: 'Delete',
@@ -142,8 +166,27 @@ function TopBar(): React.JSX.Element {
           onClose={() => setPageMenu(null)}
         />
       )}
+      {tplMenu && activePath && (
+        <ContextMenu
+          x={tplMenu.x}
+          y={tplMenu.y}
+          items={templates.map((t) => ({
+            label: t.name,
+            onClick: () => void applyTemplateToNote(activePath, t.path)
+          }))}
+          onClose={() => setTplMenu(null)}
+        />
+      )}
+      {historyFor && <HistoryPanel path={historyFor} onClose={() => setHistoryFor(null)} />}
     </div>
   )
+}
+
+/** Flush pending edits, then print the window to a PDF (print CSS isolates the note). */
+async function exportActivePdf(_path: string, name: string): Promise<void> {
+  await useStore.getState().saveActive()
+  const saved = await window.verso.exportPdf(name)
+  if (saved === null) return // cancelled, or failed (already logged in main)
 }
 
 // Remembers each note's scroll offset for the session, so switching away and back returns
@@ -152,19 +195,23 @@ const scrollMemory = new Map<string, number>()
 
 function NoteArea({ path }: { path: string }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
+  // Keyed by vault root + note path — relative paths recur across vaults, and an
+  // offset saved in one vault must not apply to a same-named note in another.
+  const root = useStore((s) => s.workspace?.root ?? '')
+  const memKey = `${root}\n${path}`
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     // BlockEditor (keyed by path) has just remounted with this note's content, so the
     // scroll height is in place — restore the saved offset.
-    el.scrollTop = scrollMemory.get(path) ?? 0
+    el.scrollTop = scrollMemory.get(memKey) ?? 0
     // The listener keeps this note's offset current while it's open; we must NOT save again
     // in cleanup, because by then the keyed BlockEditor has swapped in the next note's
     // content and el.scrollTop no longer belongs to `path`.
-    const save = (): void => void scrollMemory.set(path, el.scrollTop)
+    const save = (): void => void scrollMemory.set(memKey, el.scrollTop)
     el.addEventListener('scroll', save, { passive: true })
     return () => el.removeEventListener('scroll', save)
-  }, [path])
+  }, [memKey])
   return (
     <div className="scroll-area" ref={ref}>
       <div className="doc">
@@ -244,6 +291,7 @@ function RightSidebar(): React.JSX.Element {
           <div className="rightbar-title">Properties</div>
           <PropertiesPanel key={activePath} path={activePath} />
           <TableOfContents key={'toc:' + activePath} path={activePath} />
+          <SimilarNotes key={'sim:' + activePath} path={activePath} />
           <LocalGraph key={'lg:' + activePath} path={activePath} />
         </>
       )}
@@ -360,9 +408,18 @@ export function App(): React.JSX.Element {
     }
     window.addEventListener('beforeunload', flush)
     document.addEventListener('visibilitychange', onVis)
+    // The real close path: main intercepts the window close, we flush ALL pending
+    // writes (awaiting the per-path write chains), then ack so main can close.
+    const offFlush = window.verso.onFlushRequest(() => {
+      void useStore
+        .getState()
+        .saveActive()
+        .finally(() => window.verso.flushDone())
+    })
     return () => {
       window.removeEventListener('beforeunload', flush)
       document.removeEventListener('visibilitychange', onVis)
+      offFlush()
     }
   }, [])
 
@@ -404,7 +461,11 @@ export function App(): React.JSX.Element {
 
   return (
     <div className={'app' + (sidebarOpen ? '' : ' sidebar-closed')}>
-      {sidebarOpen && <Sidebar />}
+      {/* Hidden, not unmounted — ⌘\ must not reset folder expansion, the search
+          query, or the scroll position every time the sidebar is re-shown. */}
+      <div style={{ display: sidebarOpen ? 'contents' : 'none' }}>
+        <Sidebar />
+      </div>
       <MainArea />
       <LinkPreview />
       <CommandPalette />

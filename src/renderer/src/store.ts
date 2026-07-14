@@ -6,10 +6,11 @@ import { basename, dirname, pathForNewNote, resolveTarget, rewriteLinks } from '
 import { resetSpell } from './lib/spell'
 import { getFrontmatter, parseFrontmatter, replaceFrontmatter } from './lib/frontmatter'
 import { applyTemplate } from './lib/templates'
-import { dailyPath } from './lib/dates'
+import { dailyPath, isValidISO } from './lib/dates'
 import { pdfBus } from './lib/pdfbus'
 import { normalizeBases, legacyLocalBases, clearLegacyLocalBases, type Base } from './lib/bases'
 import { dropFromScanCache, clearScanCache } from './lib/query'
+import { clearTodoCache } from './lib/todos'
 import { normalizeDoc } from './lib/canvas'
 import {
   buildSupertagIndex,
@@ -80,6 +81,10 @@ interface VersoState {
   recentVaults: string[]
   files: NoteFile[]
   texts: Record<string, string>
+  /** Bumped on every text change. `texts` is mutated IN PLACE on the typing hot
+   *  path (same map identity, so per-keystroke cloning never happens) — subscribe
+   *  to this tick, not the map, to react to text changes. */
+  textsTick: number
   parsed: Record<string, ParsedNote>
   index: VaultIndex
   /** Global navigation history for back/forward (main pane) — notes and view screens. */
@@ -181,6 +186,8 @@ interface VersoState {
   renameCanvas: (path: string, name: string) => Promise<void>
   bootstrap: () => Promise<void>
   openWorkspace: () => Promise<void>
+  /** Open the bundled demo vault (copied somewhere writable on first use). */
+  openDemoVault: () => Promise<void>
   /** Switch to an already-known vault by path (flushes pending edits first). */
   switchVault: (root: string) => Promise<void>
   /** Forget a vault from the switcher list (does not delete its files). */
@@ -213,6 +220,8 @@ interface VersoState {
   editActive: (text: string) => void
   /** Flush all pending debounced saves to disk. */
   saveActive: () => Promise<void>
+  /** True if `path` has an unsaved buffered edit (module state, so a getter). */
+  hasPendingEdit: (path: string) => boolean
   setNoteProperties: (path: string, data: Record<string, unknown>) => Promise<void>
   /** Persist resized column widths for the `index`-th table block (app-managed `_tableWidths`). */
   setTableWidths: (path: string, index: number, widths: number[]) => Promise<void>
@@ -333,7 +342,7 @@ export const useStore = create<VersoState>((set, get) => {
   const updateText = (path: string, text: string): void => {
     const texts = get().texts
     texts[path] = text
-    set({ texts })
+    set({ texts, textsTick: get().textsTick + 1 })
     dirtyPaths.add(path)
     scheduleIndexRebuild()
   }
@@ -357,6 +366,14 @@ export const useStore = create<VersoState>((set, get) => {
   const queueWrite = (p: string, t: string): Promise<void> => {
     const chained = (writeChains.get(p) ?? Promise.resolve()).then(async () => {
       const res = await window.verso.writeNote(p, t)
+      if (res.ok && res.conflictPath) {
+        // The file changed on disk (sync tool / another app) while this edit was
+        // buffered. Our version kept the note's path; theirs was preserved as a
+        // sibling conflict file — tell the user so nothing is lost silently.
+        set({
+          saveError: `Sync conflict on ${basename(p)}: another version was saved as “${basename(res.conflictPath)}”`
+        })
+      }
       if (!res.ok) {
         set({ saveError: `Couldn't save ${p}: ${res.error}` })
         // Don't drop the edit: put the text back in the buffer (unless a newer edit
@@ -364,7 +381,7 @@ export const useStore = create<VersoState>((set, get) => {
         // instead of silently losing the change on quit.
         if (!pending.has(p)) {
           pending.set(p, t)
-          set({ dirty: true })
+          syncDirty()
           scheduleFlush(5000) // back off — retrying every 600ms would spam a dead disk
         }
       }
@@ -378,6 +395,11 @@ export const useStore = create<VersoState>((set, get) => {
 
   // Debounced per-path saves, so multiple editors (e.g. journal days) can be live at once.
   const pending = new Map<string, string>()
+  /** `dirty` is always derived from `pending` — call after any pending mutation. */
+  const syncDirty = (): void => {
+    const dirty = pending.size > 0
+    if (get().dirty !== dirty) set({ dirty })
+  }
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   const flushAll = async (): Promise<void> => {
     if (flushTimer) {
@@ -386,8 +408,11 @@ export const useStore = create<VersoState>((set, get) => {
     }
     const entries = [...pending.entries()]
     pending.clear()
-    set({ dirty: false })
+    syncDirty()
     await Promise.all(entries.map(([p, t]) => queueWrite(p, t)))
+    // Also drain writes queued OUTSIDE the buffer (properties, task toggles) so a
+    // pre-close flush really means "everything is on disk", not just typed edits.
+    await Promise.all([...writeChains.values()])
   }
   const scheduleFlush = (delay = 600): void => {
     if (flushTimer) clearTimeout(flushTimer)
@@ -407,6 +432,7 @@ export const useStore = create<VersoState>((set, get) => {
     flushTimer = null
     resetSpell() // the new vault has its own spellcheck ignore list
     clearScanCache() // query scan cache entries belong to the previous vault
+    clearTodoCache() // …and so do the cached per-note todo lists
     const { texts, parsed } = await loadAll()
     const first = ws.files[0]?.path
     set({
@@ -467,9 +493,10 @@ export const useStore = create<VersoState>((set, get) => {
     (a.kind === 'note'
       ? a.path === (b as { path: string }).path
       : a.view === (b as { view: ViewMode }).view &&
-        a.baseId === (b as { baseId?: string | null }).baseId &&
-        a.tag === (b as { tag?: string | null }).tag &&
-        a.canvasPath === (b as { canvasPath?: string | null }).canvasPath)
+        // normalize: `undefined` (field omitted) and `null` are the same step
+        (a.baseId ?? null) === ((b as { baseId?: string | null }).baseId ?? null) &&
+        (a.tag ?? null) === ((b as { tag?: string | null }).tag ?? null) &&
+        (a.canvasPath ?? null) === ((b as { canvasPath?: string | null }).canvasPath ?? null))
 
   /** Longest back/forward history kept; older steps fall off the front. */
   const HISTORY_MAX = 200
@@ -482,6 +509,32 @@ export const useStore = create<VersoState>((set, get) => {
     set({ history: next, histIndex: next.length - 1 })
   }
   const recordHistory = (path: string): void => pushHistory({ kind: 'note', path })
+
+  /** Drop history steps for a deleted note (Back must not resurrect it), deduping
+   *  any now-adjacent identical steps and keeping histIndex on the same entry. */
+  const pruneHistory = (
+    history: HistEntry[],
+    histIndex: number,
+    deadPath: string
+  ): { history: HistEntry[]; histIndex: number } => {
+    const kept: HistEntry[] = []
+    let idx = histIndex
+    for (let i = 0; i < history.length; i++) {
+      const h = history[i]
+      const drop =
+        (h.kind === 'note' && h.path === deadPath) || sameEntry(kept[kept.length - 1], h)
+      if (drop) {
+        if (i <= histIndex) idx--
+      } else {
+        kept.push(h)
+      }
+    }
+    return { history: kept, histIndex: Math.min(Math.max(idx, 0), kept.length - 1) }
+  }
+
+  /** Point history steps for a renamed note at its new path. */
+  const remapHistory = (history: HistEntry[], oldPath: string, newPath: string): HistEntry[] =>
+    history.map((h) => (h.kind === 'note' && h.path === oldPath ? { ...h, path: newPath } : h))
 
   /** Apply a history step to the view state (no new history record). */
   const restoreEntry = (entry: HistEntry): void => {
@@ -503,6 +556,7 @@ export const useStore = create<VersoState>((set, get) => {
     recentVaults: [],
     files: [],
     texts: {},
+    textsTick: 0,
     parsed: {},
     index: new VaultIndex([], {}),
     history: [],
@@ -711,6 +765,7 @@ export const useStore = create<VersoState>((set, get) => {
       const text = replaceFrontmatter(combinedBody, mergedFm)
       updateNoteState(notePath, text)
       pending.delete(notePath)
+      syncDirty()
       await queueWrite(notePath, text)
     },
 
@@ -806,16 +861,33 @@ export const useStore = create<VersoState>((set, get) => {
       const last = await window.verso.getLastWorkspace()
       if (!last) return
       set({ loading: true })
-      const ws = await window.verso.loadWorkspace(last)
-      if (!ws) return set({ loading: false })
-      await applyWorkspace(ws)
+      try {
+        const ws = await window.verso.loadWorkspace(last)
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false }) // never leave the loading screen stuck on a failure
+      }
     },
 
     openWorkspace: async () => {
       set({ loading: true })
-      const ws = await window.verso.openWorkspace()
-      if (!ws) return set({ loading: false })
-      await applyWorkspace(ws)
+      try {
+        const ws = await window.verso.openWorkspace()
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false })
+      }
+      set({ recentVaults: await window.verso.getWorkspaces() })
+    },
+
+    openDemoVault: async () => {
+      set({ loading: true })
+      try {
+        const ws = await window.verso.openDemoVault()
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false })
+      }
       set({ recentVaults: await window.verso.getWorkspaces() })
     },
 
@@ -823,9 +895,12 @@ export const useStore = create<VersoState>((set, get) => {
       if (get().workspace?.root === root) return
       if (get().dirty) await flushAll() // don't lose unsaved edits on swap
       set({ loading: true })
-      const ws = await window.verso.loadWorkspace(root)
-      if (!ws) return set({ loading: false })
-      await applyWorkspace(ws)
+      try {
+        const ws = await window.verso.loadWorkspace(root)
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false })
+      }
       set({ recentVaults: await window.verso.getWorkspaces() })
     },
 
@@ -911,7 +986,7 @@ export const useStore = create<VersoState>((set, get) => {
     editNote: (path, text) => {
       updateText(path, text)
       pending.set(path, text)
-      set({ dirty: true })
+      syncDirty()
       scheduleFlush()
     },
 
@@ -927,11 +1002,14 @@ export const useStore = create<VersoState>((set, get) => {
 
     saveActive: () => flushAll(),
 
+    hasPendingEdit: (path) => pending.has(path),
+
     setNoteProperties: async (path, data) => {
       const cur = get().texts[path] ?? ''
       const text = replaceFrontmatter(cur, data)
       updateNoteState(path, text)
       pending.delete(path)
+      syncDirty()
       await queueWrite(path, text)
     },
 
@@ -996,6 +1074,7 @@ export const useStore = create<VersoState>((set, get) => {
       // survives an immediate app close.
       updateNoteState(path, text)
       pending.delete(path)
+      syncDirty()
       await queueWrite(path, text)
     },
 
@@ -1010,6 +1089,13 @@ export const useStore = create<VersoState>((set, get) => {
         side ? get().openInSidePane(existing) : get().openNote(existing)
         return
       }
+      // An unresolved ISO-date link is a journal day, not a root note: [[2026-07-15]]
+      // creates/opens Daily/2026/07/2026-07-15.md (natural-language `[[` dates land here).
+      if (isValidISO(raw.trim())) {
+        const daily = await get().ensureDailyNote(raw.trim())
+        side ? get().openInSidePane(daily) : get().openNote(daily)
+        return
+      }
       const path = pathForNewNote(raw)
       // Start with an empty body — the title comes from the filename (shown at the top),
       // so the note opens as a blank paragraph ready for typing.
@@ -1017,6 +1103,8 @@ export const useStore = create<VersoState>((set, get) => {
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         side ? get().openInSidePane(created.path) : get().openNote(created.path)
+      } else {
+        set({ saveError: `Couldn't create ${path}` })
       }
     },
 
@@ -1079,11 +1167,16 @@ export const useStore = create<VersoState>((set, get) => {
             files,
             texts,
             parsed,
-            index: buildIndex(parsed, texts),
             activePath: state.activePath === event.path ? (files[0]?.path ?? null) : state.activePath,
-            sidePanes: state.sidePanes.filter((sp) => sp.path !== event.path)
+            sidePanes: state.sidePanes.filter((sp) => sp.path !== event.path),
+            // Back must not resurrect the dead note (one keystroke would recreate it).
+            ...pruneHistory(state.history, state.histIndex, event.path)
           }
         })
+        // Index rebuild goes through the debounce: a sync burst deleting N files
+        // then costs one rebuild, not N.
+        dirtyPaths.add(event.path)
+        scheduleIndexRebuild()
         return
       }
 
@@ -1091,16 +1184,25 @@ export const useStore = create<VersoState>((set, get) => {
       // open note / splits follow the file instead of resetting).
       if (event.type === 'rename') {
         dropFromScanCache(event.oldPath)
+        // An unsaved buffer follows the file — and wins over what's on disk, so a
+        // keystroke typed right around the move isn't clobbered by this event.
+        if (pending.has(event.oldPath)) {
+          pending.set(event.path, pending.get(event.oldPath)!)
+          pending.delete(event.oldPath)
+        }
+        const keepLocal = isPending(event.path)
         const content = await window.verso.readNote(event.path)
         set((state) => {
           const texts = { ...state.texts }
           const parsed = { ...state.parsed }
+          const local = keepLocal ? (state.texts[event.oldPath] ?? state.texts[event.path]) : undefined
           delete texts[event.oldPath]
           delete parsed[event.oldPath]
           let files = state.files.filter((f) => f.path !== event.oldPath)
           if (content !== null) {
-            texts[event.path] = content.text
-            parsed[event.path] = parseNote(event.path, content.text)
+            const text = local ?? content.text
+            texts[event.path] = text
+            parsed[event.path] = parseNote(event.path, text)
             const meta = event.file ?? { path: event.path, name: basename(event.path), mtime: 0 }
             files = [...files.filter((f) => f.path !== event.path), meta]
           }
@@ -1109,7 +1211,6 @@ export const useStore = create<VersoState>((set, get) => {
             files,
             texts,
             parsed,
-            index: buildIndex(parsed, texts),
             activePath:
               state.activePath === event.oldPath
                 ? moved
@@ -1118,9 +1219,15 @@ export const useStore = create<VersoState>((set, get) => {
                 : state.activePath,
             sidePanes: moved
               ? state.sidePanes.map((sp) => (sp.path === event.oldPath ? { ...sp, path: event.path } : sp))
-              : state.sidePanes.filter((sp) => sp.path !== event.oldPath)
+              : state.sidePanes.filter((sp) => sp.path !== event.oldPath),
+            ...(moved
+              ? { history: remapHistory(state.history, event.oldPath, event.path) }
+              : pruneHistory(state.history, state.histIndex, event.oldPath))
           }
         })
+        dirtyPaths.add(event.oldPath)
+        dirtyPaths.add(event.path)
+        scheduleIndexRebuild()
         return
       }
 
@@ -1132,7 +1239,10 @@ export const useStore = create<VersoState>((set, get) => {
       // one another, so only the last few would survive.
       const content = await window.verso.readNote(file.path)
       if (content === null) return
+      let deferredRebuild = false
       set((state) => {
+        // Re-check after the await: an edit may have started while we were reading.
+        if (event.type === 'change' && isPending(file.path)) return {}
         const texts = { ...state.texts, [file.path]: content.text }
         const note = parseNote(file.path, content.text)
         const parsed = { ...state.parsed, [file.path]: note }
@@ -1141,11 +1251,17 @@ export const useStore = create<VersoState>((set, get) => {
           ? state.files.map((f) => (f.path === file.path ? file : f))
           : [...state.files, file]
         // A change to an existing note patches the index in O(1 note); a brand-new
-        // file (or an alias shift, which withContentChanges rejects) rebuilds fully.
+        // file (or an alias shift, which withContentChanges rejects) defers to the
+        // debounced rebuild so a sync burst costs one rebuild, not one per file.
         const incremental =
           event.type === 'change' && known ? state.index.withContentChanges([note], texts) : null
-        return { files, texts, parsed, index: incremental ?? buildIndex(parsed, texts) }
+        deferredRebuild = !incremental
+        return { files, texts, parsed, index: incremental ?? state.index }
       })
+      if (deferredRebuild) {
+        dirtyPaths.add(file.path)
+        scheduleIndexRebuild()
+      }
     },
 
     renameNote: async (oldPath, input) => {
@@ -1155,35 +1271,67 @@ export const useStore = create<VersoState>((set, get) => {
       const newPath = trimmed.includes('/') ? `${trimmed}.md` : dir ? `${dir}/${trimmed}.md` : `${trimmed}.md`
       if (newPath === oldPath) return
 
-      const state = get()
-      if (isPending(oldPath)) await flushAll()
+      // Flush ALL buffers, not just the renamed note's: a referrer with a pending
+      // edit would otherwise re-flush its pre-rewrite text ~600ms from now and
+      // silently undo the link rewrite on disk.
+      await flushAll()
       const created = await window.verso.renameNote(oldPath, newPath)
-      if (!created) return
+      if (!created) {
+        set({ saveError: `Couldn't rename "${basename(oldPath)}" — "${basename(newPath)}" already exists?` })
+        return
+      }
       dropFromScanCache(oldPath)
 
       try {
+        // Snapshot AFTER the awaits above so keystrokes typed meanwhile are included.
+        const state = get()
         const oldAllPaths = state.files.map((f) => f.path)
-        // The renamed note's own body may link to itself by its old name — rewrite it too.
+        // Compute every rewrite up front. The renamed note's own body may link to
+        // itself by its old name, so it's rewritten too.
         const own = state.texts[oldPath] ?? ''
-        const ownRewritten = rewriteLinks(own, oldPath, newPath, oldAllPaths)
-        const texts: Record<string, string> = { [newPath]: ownRewritten }
-        if (ownRewritten !== own) await queueWrite(newPath, ownRewritten)
+        const rewrites = new Map<string, string>([[newPath, rewriteLinks(own, oldPath, newPath, oldAllPaths)]])
         for (const [p, t] of Object.entries(state.texts)) {
           if (p === oldPath) continue
           const rewritten = rewriteLinks(t, oldPath, newPath, oldAllPaths)
-          texts[p] = rewritten
-          if (rewritten !== t) await queueWrite(p, rewritten)
+          if (rewritten !== t) rewrites.set(p, rewritten)
         }
-        const parsed: Record<string, ParsedNote> = {}
-        for (const [p, t] of Object.entries(texts)) parsed[p] = parseNote(p, t)
-        const files = state.files.filter((f) => f.path !== oldPath).concat(created)
-        set({
-          texts,
-          parsed,
-          files,
-          index: buildIndex(parsed, texts),
-          activePath: state.activePath === oldPath ? newPath : state.activePath,
-          sidePanes: state.sidePanes.map((sp) => (sp.path === oldPath ? { ...sp, path: newPath } : sp))
+        // An edit buffered during the rename follows the file / gets the rewrite
+        // applied, so its eventual flush can't undo what we're about to write.
+        if (pending.has(oldPath)) {
+          pending.set(newPath, rewriteLinks(pending.get(oldPath)!, oldPath, newPath, oldAllPaths))
+          pending.delete(oldPath)
+        }
+        for (const p of rewrites.keys()) {
+          if (p !== newPath && pending.has(p)) {
+            pending.set(p, rewriteLinks(pending.get(p)!, oldPath, newPath, oldAllPaths))
+          }
+        }
+        // Persist the changed files.
+        if (rewrites.get(newPath) !== own) await queueWrite(newPath, rewrites.get(newPath)!)
+        for (const [p, t] of rewrites) {
+          if (p !== newPath) await queueWrite(p, t)
+        }
+        // Merge onto the freshest state (watcher events / keystrokes may have landed
+        // mid-rename) and reparse only the notes that actually changed.
+        set((s) => {
+          const texts = { ...s.texts }
+          const parsed = { ...s.parsed }
+          delete texts[oldPath]
+          delete parsed[oldPath]
+          for (const [p, t] of rewrites) {
+            texts[p] = t
+            parsed[p] = parseNote(p, t)
+          }
+          const files = s.files.filter((f) => f.path !== oldPath && f.path !== newPath).concat(created)
+          return {
+            texts,
+            parsed,
+            files,
+            index: buildIndex(parsed, texts),
+            activePath: s.activePath === oldPath ? newPath : s.activePath,
+            sidePanes: s.sidePanes.map((sp) => (sp.path === oldPath ? { ...sp, path: newPath } : sp)),
+            history: remapHistory(s.history, oldPath, newPath)
+          }
         })
         // Canvas cards point at notes by path — retarget any that referenced the old path.
         for (const c of get().canvases) {
@@ -1217,7 +1365,10 @@ export const useStore = create<VersoState>((set, get) => {
 
     deleteNote: async (path) => {
       const ok = await window.verso.deleteNote(path)
-      if (!ok) return
+      if (!ok) {
+        set({ saveError: `Couldn't delete ${path}` })
+        return
+      }
       await get().applyFileEvent({ type: 'unlink', path })
     },
 
@@ -1232,6 +1383,8 @@ export const useStore = create<VersoState>((set, get) => {
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         get().openNote(created.path)
+      } else {
+        set({ saveError: `Couldn't duplicate ${path}` })
       }
     },
 

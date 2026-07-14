@@ -24,8 +24,20 @@ describe('parseBlocks / serializeBlocks round trip', () => {
     expect(roundTrip(text)).toBe(text)
   })
 
-  it('preserves non-sequential ordered-list numbers', () => {
+  it('renumbers ordered lists to what the editor displays (position-based)', () => {
+    // The editor always shows position-based numbers (1, 2, 3…) — the file must
+    // say what the user sees, so gaps/duplicates normalize on save.
     const text = '3. third\n5. fifth\n9. ninth\n'
+    expect(roundTrip(text)).toBe('1. third\n2. fifth\n3. ninth\n')
+  })
+
+  it('restarts ordered numbering after an unordered sibling, per run', () => {
+    const text = '1. a\n2. b\n- break\n1. c\n2. d\n'
+    expect(roundTrip(text)).toBe(text)
+  })
+
+  it('numbers nested ordered runs independently of the parent run', () => {
+    const text = '1. a\n  1. a1\n  2. a2\n2. b\n'
     expect(roundTrip(text)).toBe(text)
   })
 
@@ -198,5 +210,36 @@ describe('moveUnit', () => {
       { id: 2, type: 'bullet', text: 'X', level: 1, collapsed: false }
     ]
     expect(moveUnit(doc, 1, 2, -1)).toBeNull()
+  })
+})
+
+describe('code fence round trip (2026-07 audit)', () => {
+  it('does not close a ``` fence with ~~~ (and vice versa)', () => {
+    const text = '```\ncode line\n~~~\nstill code\n```\n\nafter\n'
+    const { blocks } = parseBlocks(text)
+    expect(blocks[0].type).toBe('code')
+    expect(blocks[0].text).toBe('code line\n~~~\nstill code')
+    expect(blocks[1].text).toBe('after')
+  })
+
+  it('round-trips a ~~~ fence with its own marker', () => {
+    const text = '~~~py\nprint("hi")\n~~~\n'
+    expect(roundTrip(text)).toBe(text)
+  })
+})
+
+describe('parseBlocks frontmatter detection (2026-07 audit)', () => {
+  it('keeps prose after a leading --- hr in the editor blocks', () => {
+    const { blocks, frontmatter } = parseBlocks('---\nScene one prose\n\nmore\n---\nrest\n')
+    expect(frontmatter).toBe('')
+    const texts = blocks.map((b) => b.text)
+    expect(texts.join('\n')).toContain('Scene one prose')
+    expect(texts.join('\n')).toContain('rest')
+  })
+
+  it('still lifts real frontmatter out of the blocks', () => {
+    const { blocks, frontmatter } = parseBlocks('---\ntitle: Hi\ntags:\n- a\n---\n\nbody\n')
+    expect(frontmatter).toContain('title: Hi')
+    expect(blocks.map((b) => b.text)).toEqual(['body'])
   })
 })

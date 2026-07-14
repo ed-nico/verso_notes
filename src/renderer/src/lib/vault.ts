@@ -1,7 +1,13 @@
 import type { LinkRef, ParsedNote } from '@shared/types'
+import { parseFrontmatter } from './frontmatter'
 import { basename, stripMd } from './links'
-import { contextForLink } from './parse'
+import { codeRanges, inRanges } from './md'
+import { contextBlockForLink } from './parse'
 import { matchBlock, parseQuery, scanBlocks, type QueryBlock } from './query'
+
+/** Link targets that are files, not notes (`![[photo.png]]` embeds) — they can
+ *  never resolve to a note, and must not become phantom graph nodes. */
+const FILE_LINK_RE = /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|m4a|pdf|canvas)$/i
 
 /** A single backlink: a source note that links to the current note. */
 export interface Backlink {
@@ -191,6 +197,8 @@ export class VaultIndex {
     // mutation is safe and avoids copying the whole vault's backlinks.
     const next: VaultIndex = Object.assign(Object.create(VaultIndex.prototype), this)
     next.texts = texts
+    // Any content change can add/remove mentions of any note — drop the memo.
+    next.unlinkedCache = new Map()
     const affected = new Set<string>()
     for (const note of changed) {
       for (const t of this.removeNoteLinks(note.path)) affected.add(t)
@@ -220,6 +228,9 @@ export class VaultIndex {
   backlinksFor(path: string): Backlink[] {
     // Context is resolved here (lazily) — only for the handful of links pointing
     // at the note actually being viewed, not for every link in the vault.
+    // A source that links here several times gets each row its OWN line: we count
+    // occurrences per (source, raw target) and ask for the nth match.
+    const occ = new Map<string, number>()
     return this.rawBacklinks(path).map((bl) => {
       // A frontmatter relationship (`author: [[…]]`) has no body line to jump to —
       // label it by its property instead of hunting for context in the body.
@@ -232,7 +243,12 @@ export class VaultIndex {
           line: -1
         }
       }
-      const ctx = contextForLink(this.texts[bl.sourcePath] ?? '', bl.ref.raw)
+      const key = `${bl.sourcePath}\n${bl.ref.raw.toLowerCase()}`
+      const n = occ.get(key) ?? 0
+      occ.set(key, n + 1)
+      // Whole-unit context (list item + children, paragraph, heading section) —
+      // a single windowed line rarely carries the meaning of the mention.
+      const ctx = contextBlockForLink(this.texts[bl.sourcePath] ?? '', bl.ref.raw, n)
       return {
         sourcePath: bl.sourcePath,
         sourceName: bl.sourceName,
@@ -248,35 +264,55 @@ export class VaultIndex {
     return this.backlinkCounts.get(path) ?? 0
   }
 
+  /** Memoized unlinked references, valid for this index generation (the scan is
+   *  O(vault) — without the cache the backlinks panel re-runs it per render). */
+  private unlinkedCache = new Map<string, Backlink[]>()
+
   /**
    * Plain-text mentions of this note's name in other notes that are NOT wrapped
-   * in a `[[wikilink]]` — Logseq-style "unlinked references".
+   * in a `[[wikilink]]` — Logseq-style "unlinked references". Mentions inside
+   * `#tags`, code (fenced or inline), or frontmatter don't count: linking those
+   * would corrupt them (frontmatter/code) or double-mark them (tags).
    */
   unlinkedReferences(path: string): Backlink[] {
+    const hit = this.unlinkedCache.get(path)
+    if (hit) return hit
     const note = this.notesByPath.get(path)
     if (!note) return []
     const esc = note.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(`(^|[^\\w[/])(${esc})([^\\w\\]/]|$)`, 'i')
+    // Left boundary excludes `#` so a #tag carrying the name isn't a "mention".
+    const re = new RegExp(`(^|[^\\w[/#])(${esc})([^\\w\\]/]|$)`, 'i')
     const out: Backlink[] = []
     for (const n of this.notes) {
       if (n.path === path) continue
       const text = this.texts[n.path] ?? ''
       // Cheap pre-filter: skip notes that don't contain the name at all.
       if (!re.test(text)) continue
-      const lines = text.split('\n')
+      const { body, bodyLine } = parseFrontmatter(text)
+      const skip = codeRanges(body)
+      const lines = body.split('\n')
+      let offset = 0
       for (let i = 0; i < lines.length; i++) {
-        // Ignore the name when it only appears inside a wikilink on this line.
-        const stripped = lines[i].replace(/\[\[[^\]\n]*\]\]/g, '')
+        const lineStart = offset
+        offset += lines[i].length + 1
+        // Skip lines inside fenced code blocks.
+        const firstCh = lines[i].search(/\S/)
+        if (firstCh !== -1 && inRanges(lineStart + firstCh, skip)) continue
+        // Ignore the name when it only appears inside a wikilink or inline code.
+        const stripped = lines[i]
+          .replace(/\[\[[^\]\n]*\]\]/g, '')
+          .replace(/`[^`\n]+`/g, '')
         if (!re.test(stripped)) continue
         out.push({
           sourcePath: n.path,
           sourceName: n.name,
           ref: { target: path, raw: note.name },
           context: lines[i],
-          line: i
+          line: bodyLine + i
         })
       }
     }
+    this.unlinkedCache.set(path, out)
     return out
   }
 
@@ -307,6 +343,7 @@ export class VaultIndex {
       if (!ref.raw) continue
       const resolved = this.resolve(ref.raw)
       if (resolved === path) continue
+      if (!resolved && FILE_LINK_RE.test(ref.raw)) continue // asset embed, not a note
       const id = resolved ?? `phantom:${ref.raw}`
       add(id, resolved ? nameOf(resolved) : ref.raw, !resolved)
       edge(path, id)
@@ -331,6 +368,7 @@ export class VaultIndex {
       for (const ref of note.links) {
         if (!ref.raw) continue
         const resolved = this.resolve(ref.raw)
+        if (!resolved && FILE_LINK_RE.test(ref.raw)) continue // asset embed, not a note
         const targetId = resolved ?? `phantom:${ref.raw}`
         if (!resolved && !nodes.has(targetId)) {
           nodes.set(targetId, { id: targetId, name: ref.raw, degree: 0, phantom: true })

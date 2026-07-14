@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useStore, templatesFromFiles } from '../store'
 import { dirname } from '../lib/links'
 import { searchNotes } from '../lib/search'
@@ -56,19 +56,31 @@ function countFiles(node: TreeFolder): number {
   return n
 }
 
+// Zustand runs selectors on EVERY store set — including each keystroke — so the
+// O(files) signature build is memoized on the input map identities. Typing never
+// changes either identity (texts mutates in place; parsed swaps only on the
+// debounced rebuild), so the common case is a two-pointer compare.
+let sigMemo: { files: unknown; parsed: unknown; sig: string } | null = null
+function structSigOf(
+  files: { path: string }[],
+  parsed: Record<string, { frontmatter: Record<string, unknown> }>
+): string {
+  if (sigMemo && sigMemo.files === files && sigMemo.parsed === parsed) return sigMemo.sig
+  let sig = ''
+  for (const f of files) {
+    const fm = parsed[f.path]?.frontmatter as { _order?: unknown; pinned?: unknown } | undefined
+    sig += f.path + ':' + String(fm?._order ?? '') + (fm?.pinned ? 'P' : '') + ';'
+  }
+  sigMemo = { files, parsed, sig }
+  return sig
+}
+
 export function Sidebar(): React.JSX.Element {
   const files = useStore((s) => s.files)
   // A signature of just the sidebar-relevant structure (files + order + pins).
   // The sidebar re-renders only when this changes — NOT on every body keystroke,
   // which would otherwise rebuild the whole file tree as you type.
-  const structSig = useStore((s) => {
-    let sig = ''
-    for (const f of s.files) {
-      const fm = s.parsed[f.path]?.frontmatter as { _order?: unknown; pinned?: unknown } | undefined
-      sig += f.path + ':' + String(fm?._order ?? '') + (fm?.pinned ? 'P' : '') + ';'
-    }
-    return sig
-  })
+  const structSig = useStore((s) => structSigOf(s.files, s.parsed))
   const activePath = useStore((s) => s.activePath)
   const view = useStore((s) => s.view)
   const openNote = useStore((s) => s.openNote)
@@ -83,6 +95,8 @@ export function Sidebar(): React.JSX.Element {
   const openCanvasView = useStore((s) => s.openCanvasView)
   const openCanvas = useStore((s) => s.openCanvas)
   const createCanvas = useStore((s) => s.createCanvas)
+  const renameCanvas = useStore((s) => s.renameCanvas)
+  const deleteCanvas = useStore((s) => s.deleteCanvas)
   const templates = useMemo(() => templatesFromFiles(files), [files])
   const newFromTemplate = useStore((s) => s.newFromTemplate)
   const openModal = useStore((s) => s.openModal)
@@ -105,6 +119,8 @@ export function Sidebar(): React.JSX.Element {
   const [applyMenu, setApplyMenu] = useState<MenuState | null>(null)
   const [folderMenu, setFolderMenu] = useState<MenuState | null>(null)
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null)
+  const [canvasMenu, setCanvasMenu] = useState<MenuState | null>(null)
+  const [renamingCanvas, setRenamingCanvas] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   // Track which folders are expanded; default (empty) = all folders collapsed.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -193,6 +209,9 @@ export function Sidebar(): React.JSX.Element {
   }
 
   const FileRow = ({ file, depth }: { file: NoteFile; depth: number }): React.JSX.Element => {
+    // Guards the rename input's Enter/Escape against the blur that follows them —
+    // without it Enter would commit twice (the second attempt fails and toasts).
+    const renameDone = useRef(false)
     if (renaming === file.path) {
       return (
         <input
@@ -200,12 +219,24 @@ export function Sidebar(): React.JSX.Element {
           autoFocus
           defaultValue={file.name}
           style={{ marginLeft: depth * 14 }}
-          onFocus={(e) => e.target.select()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitRename(file.path, e.currentTarget.value)
-            else if (e.key === 'Escape') setRenaming(null)
+          onFocus={(e) => {
+            renameDone.current = false
+            e.target.select()
           }}
-          onBlur={() => setRenaming(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              renameDone.current = true
+              commitRename(file.path, e.currentTarget.value)
+            } else if (e.key === 'Escape') {
+              renameDone.current = true
+              setRenaming(null)
+            }
+          }}
+          // Clicking away COMMITS (matching the canvas rename) — typed input is
+          // work; only an explicit Escape discards it.
+          onBlur={(e) => {
+            if (!renameDone.current) commitRename(file.path, e.currentTarget.value)
+          }}
         />
       )
     }
@@ -412,16 +443,42 @@ export function Sidebar(): React.JSX.Element {
             </button>
           ))}
         {canvasesOpen &&
-          canvases.map((c) => (
-            <button
-              key={c.path}
-              className={'nav-subitem' + (view === 'canvas' && activeCanvasPath === c.path ? ' active' : '')}
-              onClick={() => openCanvas(c.path)}
-              title={c.path}
-            >
-              ▱ {c.name}
-            </button>
-          ))}
+          canvases.map((c) =>
+            renamingCanvas === c.path ? (
+              <input
+                key={c.path}
+                className="file-rename"
+                autoFocus
+                defaultValue={c.name}
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = e.currentTarget.value
+                    setRenamingCanvas(null)
+                    if (v.trim()) void renameCanvas(c.path, v)
+                  } else if (e.key === 'Escape') setRenamingCanvas(null)
+                }}
+                onBlur={(e) => {
+                  const v = e.currentTarget.value
+                  setRenamingCanvas(null)
+                  if (v.trim() && v.trim() !== c.name) void renameCanvas(c.path, v)
+                }}
+              />
+            ) : (
+              <button
+                key={c.path}
+                className={'nav-subitem' + (view === 'canvas' && activeCanvasPath === c.path ? ' active' : '')}
+                onClick={() => openCanvas(c.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setCanvasMenu({ path: c.path, name: c.name, x: e.clientX, y: e.clientY })
+                }}
+                title={c.path}
+              >
+                ▱ {c.name}
+              </button>
+            )
+          )}
         {canvasesOpen && (
           <button className="nav-subitem nav-subitem-add" onClick={() => void createCanvas('Canvas')}>
             ＋ New canvas
@@ -523,6 +580,23 @@ export function Sidebar(): React.JSX.Element {
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={() => setMenu(null)} />
+      )}
+      {canvasMenu && (
+        <ContextMenu
+          x={canvasMenu.x}
+          y={canvasMenu.y}
+          items={[
+            { label: 'Rename', onClick: () => setRenamingCanvas(canvasMenu.path) },
+            {
+              label: 'Delete',
+              danger: true,
+              onClick: () => {
+                if (window.confirm(`Move “${canvasMenu.name}” to the Trash?`)) void deleteCanvas(canvasMenu.path)
+              }
+            }
+          ]}
+          onClose={() => setCanvasMenu(null)}
+        />
       )}
       {folderMenu && (
         <ContextMenu

@@ -17,7 +17,31 @@ function ContextText({ text, name, opts }: { text: string; name: string; opts: I
   // Drop any leftover `^id` anchors so they never appear on screen.
   const cleaned = text.replace(/\s\^[A-Za-z0-9-]+(?=\s|$)/g, '')
   if (cleaned.trim() === '') return <em>links to {name}</em>
-  return <>{renderInline(cleaned, opts)}</>
+  const lines = cleaned.split('\n').filter((l) => l.trim() !== '')
+  if (lines.length === 1) return <>{renderInline(stripMarker(cleaned).text, opts)}</>
+  // Block context (list item + children / paragraph / heading section): one row
+  // per line, keeping relative indentation and bullets for orientation.
+  const base = Math.min(...lines.map((l) => l.match(/^\s*/)![0].length))
+  return (
+    <>
+      {lines.map((l, i) => {
+        const { text: t, listItem } = stripMarker(l)
+        const depth = Math.max(0, Math.round((l.match(/^\s*/)![0].length - base) / 2))
+        return (
+          <span key={i} className="bl-ctx-line" style={{ paddingLeft: depth * 12 }}>
+            {listItem && <span className="bl-ctx-dot">•</span>}
+            {renderInline(t, opts)}
+          </span>
+        )
+      })}
+    </>
+  )
+}
+
+/** Strip a leading list/task marker; report whether the line was a list item. */
+function stripMarker(line: string): { text: string; listItem: boolean } {
+  const t = line.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '')
+  return { text: t.trim(), listItem: t !== line }
 }
 
 /** A single backlink reference. Unlinked ones get a "Link" action to wrap the mention. */

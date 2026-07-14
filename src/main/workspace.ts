@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import { promises as fs, realpathSync } from 'fs'
 import path from 'path'
 import chokidar, { type FSWatcher } from 'chokidar'
@@ -8,27 +9,31 @@ import type { AssetFile, CanvasMeta, FileEvent, NoteFile, Workspace, WriteResult
 /** Folders we never index (mirrors Octarine/Obsidian conventions). */
 const IGNORED_DIRS = new Set(['.git', 'node_modules', '.obsidian', '.octarine', '.trash', '.verso'])
 
-/** Non-markdown file types surfaced in the Assets view. */
-const ASSET_EXTS = new Set([
+/** Every media type the app handles — single source of truth for the Assets view,
+ *  the watcher, and the `verso://` protocol (they drifted apart as three lists:
+ *  `.mov` was served but never watched, audio was watched but invisible in Assets). */
+export const MEDIA_EXTS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
   '.mp4', '.webm', '.mov',
+  '.mp3', '.wav', '.m4a',
   '.pdf'
 ])
 
-/** Non-markdown extensions whose watcher events we forward to the renderer. */
-const WATCHED_EXTS = new Set([
-  '.md', '.canvas',
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
-  '.pdf',
-  '.mp4', '.webm',
-  '.mp3', '.wav', '.m4a'
-])
+/** Non-markdown file types surfaced in the Assets view. */
+const ASSET_EXTS = MEDIA_EXTS
+
+/** Extensions whose watcher events we forward to the renderer. */
+const WATCHED_EXTS = new Set(['.md', '.canvas', ...MEDIA_EXTS])
 
 /** Files inside the otherwise-ignored `.verso/` dir whose events we do forward. */
 const VERSO_WATCHED = new Set(['.verso/bases.json', '.verso/custom.css'])
 
 let watcher: FSWatcher | null = null
 let currentRoot: string | null = null
+// Bumped whenever the watcher is (re)started or closed. Handlers capture their
+// generation and check it before sending, so a buffered unlink timer from vault A
+// can't fire an event into vault B after a switch.
+let watchGen = 0
 
 /** Log an unexpected fs error, ignoring the benign not-found / already-exists cases. */
 function logErr(context: string, e: unknown): void {
@@ -45,13 +50,21 @@ function errMsg(e: unknown): string {
 }
 
 /**
- * Write `data` atomically: write a sibling tmp file, then rename over the destination,
- * so a crash mid-write can never leave a truncated file behind.
+ * Write `data` atomically: write a sibling tmp file, fsync it, then rename over the
+ * destination — so neither a process crash nor a power loss mid-write can leave a
+ * truncated or empty file behind (rename alone doesn't survive power loss on all
+ * filesystems; the data must be flushed before the rename).
  */
 export async function atomicWrite(filePath: string, data: string | Buffer): Promise<void> {
   const tmp = `${filePath}.${process.pid}.tmp`
   try {
-    await fs.writeFile(tmp, data)
+    const fh = await fs.open(tmp, 'w')
+    try {
+      await fh.writeFile(data)
+      await fh.sync()
+    } finally {
+      await fh.close()
+    }
     await fs.rename(tmp, filePath)
   } catch (e) {
     try {
@@ -69,24 +82,64 @@ export async function atomicWrite(filePath: string, data: string | Buffer): Prom
 
 const SELF_WRITE_WINDOW_MS = 2500
 const selfWrites = new Map<string, number>() // relPath -> Date.now() of our write
+// Kept separate from selfWrites: a delete must suppress only the `unlink` echo.
+// (One shared map would also swallow a legitimate re-add — e.g. a sync tool or git
+// restoring the file seconds after an in-app delete — and the renderer would never
+// learn the note is back.)
+const selfDeletes = new Map<string, number>() // relPath -> Date.now() of our delete/move-away
 
-function noteSelfWrite(rel: string): void {
+function markRecent(map: Map<string, number>, rel: string): void {
   const now = Date.now()
-  selfWrites.set(rel, now)
+  map.set(rel, now)
   // Opportunistic cleanup so the map can't grow unboundedly.
-  if (selfWrites.size > 128) {
-    for (const [k, t] of selfWrites) if (now - t > SELF_WRITE_WINDOW_MS) selfWrites.delete(k)
+  if (map.size > 128) {
+    for (const [k, t] of map) if (now - t > SELF_WRITE_WINDOW_MS) map.delete(k)
   }
 }
 
-function isRecentSelfWrite(rel: string): boolean {
-  const t = selfWrites.get(rel)
+function isRecent(map: Map<string, number>, rel: string): boolean {
+  const t = map.get(rel)
   if (t === undefined) return false
   if (Date.now() - t > SELF_WRITE_WINDOW_MS) {
-    selfWrites.delete(rel)
+    map.delete(rel)
     return false
   }
   return true
+}
+
+const noteSelfWrite = (rel: string): void => markRecent(selfWrites, rel)
+const isRecentSelfWrite = (rel: string): boolean => isRecent(selfWrites, rel)
+const noteSelfDelete = (rel: string): void => markRecent(selfDeletes, rel)
+const isRecentSelfDelete = (rel: string): boolean => isRecent(selfDeletes, rel)
+
+// Content-based echo detection (in addition to the timer): the hash of what we
+// last WROTE to each path. A change event whose on-disk content still matches is
+// our own write echoing back — however late it arrives (slow disks and network
+// mounts routinely outlive the 2.5s window; a timer alone misses those).
+const lastWrittenHash = new Map<string, string>()
+
+const contentHash = (text: string | Buffer): string => createHash('sha1').update(text).digest('hex')
+
+function noteWrittenContent(rel: string, text: string | Buffer): void {
+  lastWrittenHash.set(rel, contentHash(text))
+  if (lastWrittenHash.size > 512) {
+    // Drop the oldest entries (Map preserves insertion order).
+    for (const k of lastWrittenHash.keys()) {
+      if (lastWrittenHash.size <= 256) break
+      lastWrittenHash.delete(k)
+    }
+  }
+}
+
+/** True when the file's CURRENT disk content is exactly what we last wrote. */
+async function isOwnContentEcho(abs: string, rel: string): Promise<boolean> {
+  const want = lastWrittenHash.get(rel)
+  if (want === undefined) return false
+  try {
+    return contentHash(await fs.readFile(abs)) === want
+  } catch {
+    return false
+  }
 }
 
 /** Convert an absolute path under root into a workspace-relative POSIX path. */
@@ -110,7 +163,16 @@ async function statFile(root: string, abs: string): Promise<NoteFile> {
 
 /** Recursively collect all .md files under root, skipping ignored/dot dirs. */
 async function collectNotes(root: string, dir = root): Promise<NoteFile[]> {
-  const entries = await fs.readdir(dir, { withFileTypes: true })
+  let entries
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch (e) {
+    // One unreadable subdirectory (EACCES, cloud-sync placeholder) must not fail
+    // the whole vault open — skip it, like listAssets/listCanvases do.
+    if (dir === root) throw e // ...but an unreadable ROOT is a real failure
+    logErr(`collectNotes ${dir}`, e)
+    return []
+  }
   const out: NoteFile[] = []
   for (const entry of entries) {
     const abs = path.join(dir, entry.name)
@@ -120,7 +182,11 @@ async function collectNotes(root: string, dir = root): Promise<NoteFile[]> {
       if (entry.name.startsWith('.')) continue
       out.push(...(await collectNotes(root, abs)))
     } else if (entry.isFile() && isMarkdown(entry.name)) {
-      out.push(await statFile(root, abs))
+      try {
+        out.push(await statFile(root, abs))
+      } catch (e) {
+        logErr(`collectNotes stat ${abs}`, e)
+      }
     }
   }
   return out
@@ -147,6 +213,7 @@ async function startWatching(root: string, win: BrowserWindow): Promise<void> {
     }
     watcher = null
   }
+  const gen = ++watchGen
   watcher = chokidar.watch(root, {
     ignored: (p: string) => {
       const rel = toRelative(root, p)
@@ -165,6 +232,9 @@ async function startWatching(root: string, win: BrowserWindow): Promise<void> {
   })
 
   const send = (event: FileEvent): void => {
+    // A stale generation means the workspace switched under us (a late buffered
+    // timer or in-flight stat) — the event belongs to the previous vault.
+    if (gen !== watchGen) return
     if (!win.isDestroyed()) win.webContents.send('file-event', event)
   }
 
@@ -205,7 +275,11 @@ async function startWatching(root: string, win: BrowserWindow): Promise<void> {
       try {
         if (!isWatchedFile(root, p)) return
         const rel = toRelative(root, p)
-        if (isRecentSelfWrite(rel)) return // our own write echoing back
+        if (isRecentSelfWrite(rel)) return // our own write echoing back (fast path)
+        // Slow echoes (network mounts, laggy disks) outlive the timer — recognize
+        // them by CONTENT: if the disk still holds exactly what we last wrote,
+        // there is nothing new to tell the renderer.
+        if (await isOwnContentEcho(p, rel)) return
         send({ type: 'change', file: await statFile(root, p) })
       } catch (e) {
         logErr(`watch change ${p}`, e) // logErr already skips ENOENT
@@ -215,6 +289,7 @@ async function startWatching(root: string, win: BrowserWindow): Promise<void> {
       try {
         if (!isWatchedFile(root, p)) return
         const rel = toRelative(root, p)
+        if (isRecentSelfDelete(rel)) return // our own delete/rename echoing back
         const base = path.basename(p)
         // Flush any older pending unlink with the same basename as a plain unlink.
         const prior = pendingUnlinks.get(base)
@@ -238,8 +313,21 @@ async function startWatching(root: string, win: BrowserWindow): Promise<void> {
     .on('error', (e) => logErr('watcher', e))
 }
 
+// Workspace switches are serialized: two racing loads could otherwise interleave
+// watcher close/start and leave the watcher on the losing root.
+let openChain: Promise<unknown> = Promise.resolve()
+
 /** Open (or re-open) a workspace at `root`, returning its note list. */
-export async function openWorkspaceAt(root: string, win: BrowserWindow): Promise<Workspace | null> {
+export function openWorkspaceAt(root: string, win: BrowserWindow): Promise<Workspace | null> {
+  const next = openChain.then(
+    () => doOpenWorkspaceAt(root, win),
+    () => doOpenWorkspaceAt(root, win)
+  )
+  openChain = next
+  return next
+}
+
+async function doOpenWorkspaceAt(root: string, win: BrowserWindow): Promise<Workspace | null> {
   try {
     const stat = await fs.stat(root)
     if (!stat.isDirectory()) return null
@@ -263,10 +351,19 @@ export async function openWorkspaceAt(root: string, win: BrowserWindow): Promise
     }
     watcher = null
   }
-  currentRoot = root
-  const files = await collectNotes(root)
-  await startWatching(root, win)
-  return { root, files }
+  watchGen++ // invalidate any still-buffered timers from the old watcher
+  knownMtimes.clear() // conflict baselines belong to the previous vault
+  lastSnapshotAt.clear()
+  lastWrittenHash.clear()
+  try {
+    const files = await collectNotes(root)
+    currentRoot = root
+    await startWatching(root, win)
+    return { root, files }
+  } catch (e) {
+    logErr('openWorkspaceAt collect', e)
+    return null
+  }
 }
 
 /**
@@ -331,12 +428,113 @@ export async function readAllNotes(): Promise<{ path: string; text: string }[]> 
   return out
 }
 
+// ---- sync-conflict detection -----------------------------------------------
+// `knownMtimes[rel]` is the file's mtime as of the app's last READ or WRITE of
+// it. A write finding a NEWER mtime on disk means something else (sync tool,
+// another editor) changed the file while the renderer held unsaved edits — the
+// exact window the renderer's pending-buffer guard can't see. Watcher events do
+// NOT update this map: only a renderer read does, so a change the renderer
+// skipped (pending buffer) still registers as a conflict at flush time.
+
+const knownMtimes = new Map<string, number>()
+
+/** A sibling path for the preserved other version: `Note (conflict 14-32-05).md`. */
+function conflictPathFor(rel: string): string {
+  const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '-')
+  return rel.replace(/\.md$/i, '') + ` (conflict ${stamp}).md`
+}
+
 export async function readNote(rel: string): Promise<string | null> {
   try {
-    return await fs.readFile(resolveInRoot(rel), 'utf8')
+    const abs = resolveInRoot(rel)
+    const text = await fs.readFile(abs, 'utf8')
+    try {
+      knownMtimes.set(rel, (await fs.stat(abs)).mtimeMs)
+    } catch {
+      /* stat is best-effort */
+    }
+    return text
   } catch (e) {
     logErr(`readNote ${rel}`, e)
     return null
+  }
+}
+
+// ---- local snapshots (`.verso/history/<note path>/<stamp>.md`) --------------
+// A safety net between the 600ms debounced write and the OS Trash: before a
+// note is overwritten, its current disk content is snapshotted — at most once
+// per SNAPSHOT_INTERVAL_MS per note, deduped against the newest snapshot, and
+// pruned to SNAPSHOT_KEEP versions. The watcher ignores `.verso/`, so snapshot
+// writes cause no event churn; the dir syncs with the vault (that's a feature —
+// history survives reinstalls) but can be .stignore'd if unwanted.
+
+const SNAPSHOT_INTERVAL_MS = 10 * 60_000
+const SNAPSHOT_KEEP = 20
+const lastSnapshotAt = new Map<string, number>()
+
+function historyDirFor(rel: string): string {
+  return path.join(currentRoot!, '.verso', 'history', ...rel.split('/'))
+}
+
+export interface SnapshotMeta {
+  /** Timestamp id, filename-safe (e.g. `2026-07-14T18-30-05`). */
+  stamp: string
+  size: number
+}
+
+export async function listSnapshots(rel: string): Promise<SnapshotMeta[]> {
+  if (!currentRoot) return []
+  try {
+    const dir = historyDirFor(rel)
+    const names = (await fs.readdir(dir)).filter((f) => f.endsWith('.md')).sort().reverse()
+    const out: SnapshotMeta[] = []
+    for (const n of names) {
+      try {
+        const stat = await fs.stat(path.join(dir, n))
+        out.push({ stamp: n.replace(/\.md$/, ''), size: stat.size })
+      } catch {
+        /* skip unreadable */
+      }
+    }
+    return out
+  } catch {
+    return [] // no history yet
+  }
+}
+
+export async function readSnapshot(rel: string, stamp: string): Promise<string | null> {
+  if (!currentRoot || !/^[\w:.T-]+$/.test(stamp)) return null
+  try {
+    return await fs.readFile(path.join(historyDirFor(rel), `${stamp}.md`), 'utf8')
+  } catch (e) {
+    logErr(`readSnapshot ${rel} ${stamp}`, e)
+    return null
+  }
+}
+
+/** Snapshot the CURRENT disk content of `rel` (about to be overwritten). */
+async function maybeSnapshot(rel: string, abs: string): Promise<void> {
+  const now = Date.now()
+  if ((lastSnapshotAt.get(rel) ?? 0) > now - SNAPSHOT_INTERVAL_MS) return
+  try {
+    const cur = await fs.readFile(abs, 'utf8')
+    if (cur.trim() === '') return // nothing worth keeping
+    const dir = historyDirFor(rel)
+    await fs.mkdir(dir, { recursive: true })
+    const names = (await fs.readdir(dir)).filter((f) => f.endsWith('.md')).sort()
+    const newest = names[names.length - 1]
+    if (newest && (await fs.readFile(path.join(dir, newest), 'utf8')) === cur) {
+      lastSnapshotAt.set(rel, now)
+      return // identical to the latest snapshot
+    }
+    const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-')
+    await fs.writeFile(path.join(dir, `${stamp}.md`), cur)
+    for (const n of names.slice(0, Math.max(0, names.length + 1 - SNAPSHOT_KEEP))) {
+      await fs.unlink(path.join(dir, n)).catch(() => {})
+    }
+    lastSnapshotAt.set(rel, now)
+  } catch (e) {
+    logErr(`snapshot ${rel}`, e) // never block the write on a failed snapshot
   }
 }
 
@@ -344,9 +542,39 @@ export async function writeNote(rel: string, text: string): Promise<WriteResult>
   try {
     const abs = resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
+    await maybeSnapshot(rel, abs)
+
+    // Conflict check: has the file changed on disk since the app last saw it?
+    let conflictPath: string | undefined
+    const known = knownMtimes.get(rel)
+    if (known !== undefined) {
+      try {
+        const stat = await fs.stat(abs)
+        if (stat.mtimeMs > known + 1) {
+          const theirs = await fs.readFile(abs, 'utf8')
+          // Same content (e.g. a touch, or the sync tool writing our own bytes
+          // back) is not a conflict.
+          if (theirs !== text) {
+            conflictPath = conflictPathFor(rel)
+            await atomicWrite(resolveInRoot(conflictPath), theirs)
+            // Deliberately NOT echo-suppressed: the watcher's `add` for the
+            // conflict file is how it appears in the renderer's sidebar.
+          }
+        }
+      } catch {
+        /* destination missing — plain create, no conflict */
+      }
+    }
+
     await atomicWrite(abs, text)
     noteSelfWrite(rel)
-    return { ok: true }
+    noteWrittenContent(rel, text)
+    try {
+      knownMtimes.set(rel, (await fs.stat(abs)).mtimeMs)
+    } catch {
+      /* stat is best-effort */
+    }
+    return conflictPath ? { ok: true, conflictPath } : { ok: true }
   } catch (e) {
     logErr(`writeNote ${rel}`, e)
     return { ok: false, error: errMsg(e) }
@@ -359,7 +587,9 @@ export async function createNote(rel: string, text: string): Promise<NoteFile | 
     await fs.mkdir(path.dirname(abs), { recursive: true })
     // Don't clobber an existing file.
     await fs.writeFile(abs, text, { encoding: 'utf8', flag: 'wx' })
-    return await statFile(currentRoot!, abs)
+    const created = await statFile(currentRoot!, abs)
+    knownMtimes.set(rel, created.mtime)
+    return created
   } catch (e) {
     logErr(`createNote ${rel}`, e)
     return null
@@ -379,8 +609,16 @@ export async function renameNote(oldRel: string, newRel: string): Promise<NoteFi
       /* target is free */
     }
     await fs.mkdir(path.dirname(to), { recursive: true })
+    // Suppress our own watcher echo: the move lands as unlink(old) + add(new). The
+    // renderer already applied the rename — the echo would re-read disk and clobber
+    // keystrokes typed right after the rename.
+    noteSelfDelete(oldRel)
+    noteSelfWrite(newRel)
     await fs.rename(from, to)
-    return await statFile(currentRoot!, to)
+    const moved = await statFile(currentRoot!, to)
+    knownMtimes.delete(oldRel)
+    knownMtimes.set(newRel, moved.mtime)
+    return moved
   } catch (e) {
     logErr(`renameNote ${oldRel} -> ${newRel}`, e)
     return null
@@ -389,8 +627,10 @@ export async function renameNote(oldRel: string, newRel: string): Promise<NoteFi
 
 export async function deleteNote(rel: string): Promise<boolean> {
   try {
-    await shell.trashItem(resolveInRoot(rel))
-    noteSelfWrite(rel)
+    const abs = resolveInRoot(rel)
+    noteSelfDelete(rel) // suppress the unlink echo (the renderer already removed it)
+    await shell.trashItem(abs)
+    knownMtimes.delete(rel)
     return true
   } catch (e) {
     logErr(`deleteNote ${rel}`, e)
@@ -535,8 +775,10 @@ export async function writeCanvas(rel: string, data: unknown): Promise<WriteResu
   try {
     const abs = resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
-    await atomicWrite(abs, JSON.stringify(data, null, 2))
+    const json = JSON.stringify(data, null, 2)
+    await atomicWrite(abs, json)
     noteSelfWrite(rel)
+    noteWrittenContent(rel, json)
     return { ok: true }
   } catch (e) {
     logErr(`writeCanvas ${rel}`, e)
@@ -575,6 +817,8 @@ export async function renameCanvas(oldRel: string, newRel: string): Promise<Canv
       /* target is free */
     }
     await fs.mkdir(path.dirname(to), { recursive: true })
+    noteSelfDelete(oldRel)
+    noteSelfWrite(newRel)
     await fs.rename(from, to)
     const stat = await fs.stat(to)
     return canvasMeta(currentRoot!, to, stat.mtimeMs)
@@ -600,8 +844,10 @@ export async function writeBases(data: unknown): Promise<WriteResult> {
   try {
     const dir = path.join(currentRoot, '.verso')
     await fs.mkdir(dir, { recursive: true })
-    await atomicWrite(path.join(dir, 'bases.json'), JSON.stringify(data, null, 2))
+    const json = JSON.stringify(data, null, 2)
+    await atomicWrite(path.join(dir, 'bases.json'), json)
     noteSelfWrite('.verso/bases.json')
+    noteWrittenContent('.verso/bases.json', json)
     return { ok: true }
   } catch (e) {
     logErr('writeBases', e)
@@ -630,8 +876,21 @@ export async function readUserDictionary(): Promise<string[]> {
   }
 }
 
+// Dictionary writes are chained: two rapid adds would otherwise both read the old
+// list and the second write would drop the first word (same pattern as prefs).
+let dictChain: Promise<string[]> = Promise.resolve([])
+
 /** Append a word to the per-vault ignore list (deduped, case-insensitive). Returns the new list. */
-export async function addUserDictionaryWord(word: string): Promise<string[]> {
+export function addUserDictionaryWord(word: string): Promise<string[]> {
+  const next = dictChain.then(
+    () => doAddDictionaryWord(word),
+    () => doAddDictionaryWord(word)
+  )
+  dictChain = next
+  return next
+}
+
+async function doAddDictionaryWord(word: string): Promise<string[]> {
   if (!currentRoot) return []
   const list = await readUserDictionary()
   if (list.some((w) => w.toLowerCase() === word.toLowerCase())) return list
@@ -647,6 +906,7 @@ export async function addUserDictionaryWord(word: string): Promise<string[]> {
 }
 
 export function closeWatcher(): void {
+  watchGen++ // invalidate buffered rename-pair timers along with the watcher
   watcher?.close().catch((e) => logErr('closeWatcher', e))
   watcher = null
 }

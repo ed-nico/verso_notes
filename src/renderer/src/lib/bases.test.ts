@@ -97,3 +97,11 @@ describe('newBase', () => {
     expect(b.id).toBeTruthy()
   })
 })
+
+describe('passesFilter ordered ops with empty filter value', () => {
+  it('matches nothing instead of coercing "" to 0', () => {
+    expect(passesFilter(5, { key: 'rating', op: '>', value: '' })).toBe(false)
+    expect(passesFilter(5, { key: 'rating', op: '<', value: '' })).toBe(false)
+    expect(passesFilter(5, { key: 'rating', op: '>=', value: '' })).toBe(false)
+  })
+})

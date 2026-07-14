@@ -32,13 +32,19 @@ export function AssetsView(): React.JSX.Element {
 
   const nameOf = (p: string): string => files.find((f) => f.path === p)?.name ?? p.replace(/\.md$/i, '')
 
-  // Which notes reference each asset (by relative path or filename).
+  // Which notes reference each asset (by relative path or filename). Names with
+  // spaces are usually linked URL-encoded (`assets/my%20photo.png`) — match that
+  // form too, or a used asset would show "unused" WITH a delete button.
   const refsByAsset = useMemo(() => {
     const map = new Map<string, string[]>()
     const entries = Object.entries(texts)
     for (const a of assets) {
+      const encPath = a.path.split('/').map(encodeURIComponent).join('/')
+      const encName = encodeURIComponent(a.name)
       const hits: string[] = []
-      for (const [p, t] of entries) if (t.includes(a.path) || t.includes(a.name)) hits.push(p)
+      for (const [p, t] of entries) {
+        if (t.includes(a.path) || t.includes(a.name) || t.includes(encPath) || t.includes(encName)) hits.push(p)
+      }
       map.set(a.path, hits)
     }
     return map

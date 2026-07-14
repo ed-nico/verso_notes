@@ -35,7 +35,18 @@ const api: VersoApi = {
     const listener = (_e: Electron.IpcRendererEvent, event: FileEvent): void => cb(event)
     ipcRenderer.on('file-event', listener)
     return () => ipcRenderer.removeListener('file-event', listener)
-  }
+  },
+  exportPdf: (suggestedName) => ipcRenderer.invoke('export:pdf', suggestedName),
+  checkUpdates: () => ipcRenderer.invoke('app:checkUpdates'),
+  openDemoVault: () => ipcRenderer.invoke('workspace:demo'),
+  listSnapshots: (path) => ipcRenderer.invoke('history:list', path),
+  readSnapshot: (path, stamp) => ipcRenderer.invoke('history:read', path, stamp),
+  onFlushRequest: (cb) => {
+    const listener = (): void => cb()
+    ipcRenderer.on('flush-request', listener)
+    return () => ipcRenderer.removeListener('flush-request', listener)
+  },
+  flushDone: () => ipcRenderer.send('app:flush-done')
 }
 
 contextBridge.exposeInMainWorld('verso', api)

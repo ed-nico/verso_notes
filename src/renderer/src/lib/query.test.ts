@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { parseQuery, matchBlock, scanBlocks, dropFromScanCache, clearScanCache, type QueryBlock } from './query'
+import { VaultIndex } from './vault'
+import { parseNote } from './parse'
 
 /** Match helper: scan `text` (one note) and return the matching block texts. */
 const run = (query: string, text: string, path = 'N.md'): string[] => {
@@ -211,5 +213,36 @@ describe('scanBlocks', () => {
     const withFm = scanBlocks('B.md', 'B', '---\ndate: 2026-03-04\nstatus: x\n---\n\n- entry')
     expect(withFm[0].date).toBe('2026-03-04')
     expect(withFm[0].props?.status).toBe('x')
+  })
+})
+
+describe('code handling parity with the parser (2026-07 audit)', () => {
+  it('uses the shared fence rules: ~~~ does not close a ``` fence', () => {
+    const idx = new VaultIndex(
+      [parseNote('A.md', '```\ncode #tag1\n~~~\nstill code #tag2')],
+      { 'A.md': '```\ncode #tag1\n~~~\nstill code #tag2' }
+    )
+    expect(idx.query('#tag1')).toHaveLength(0)
+    expect(idx.query('#tag2')).toHaveLength(0) // unclosed fence runs to EOF
+  })
+
+  it('ignores tags and links inside inline code spans', () => {
+    const text = 'use `#notatag` and `[[NotALink]]` but #real works'
+    const idx = new VaultIndex([parseNote('A.md', text)], { 'A.md': text })
+    expect(idx.query('#notatag')).toHaveLength(0)
+    expect(idx.query('[[NotALink]]')).toHaveLength(0)
+    expect(idx.query('#real')).toHaveLength(1)
+  })
+})
+
+describe('date atom validation', () => {
+  it('rejects an impossible ISO-shaped date instead of string-comparing it', () => {
+    const text = 'entry line'
+    const idx = new VaultIndex([parseNote('Daily/2026/07/2026-07-01.md', text)], {
+      'Daily/2026/07/2026-07-01.md': text
+    })
+    // Invalid date atom degrades to a word term, which the block doesn't contain.
+    expect(idx.query('before:2026-13-45')).toHaveLength(0)
+    expect(idx.query('before:2026-08-01')).toHaveLength(1)
   })
 })

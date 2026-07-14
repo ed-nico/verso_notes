@@ -40,7 +40,19 @@ export function Calendar({ onPick }: { onPick: (iso: string) => void }): React.J
             (inMonth ? '' : ' faint') +
             (hasNote(iso) ? ' has-note' : '')
           return (
-            <div className={cls} key={iso} onClick={() => onPick(iso)}>
+            <div
+              className={cls}
+              key={iso}
+              role="button"
+              tabIndex={0}
+              onClick={() => onPick(iso)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onPick(iso)
+                }
+              }}
+            >
               {Number(iso.slice(8, 10))}
             </div>
           )

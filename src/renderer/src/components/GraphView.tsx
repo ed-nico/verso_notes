@@ -7,6 +7,50 @@ import type { GraphNode, GraphLink } from '../lib/vault'
 const endpointId = (e: unknown): string =>
   typeof e === 'object' && e !== null ? (e as { id: string }).id : (e as string)
 
+/** The palette slice the canvas graphs paint with, resolved from the CSS variables. */
+export interface GraphColors {
+  bg: string
+  text: string
+  textDim: string
+  textFaint: string
+  border: string
+  bgHover: string
+  accent: string
+  accentDim: string
+  link: string
+}
+
+const readGraphColors = (): GraphColors => {
+  const css = getComputedStyle(document.documentElement)
+  const v = (name: string): string => css.getPropertyValue(name).trim()
+  return {
+    bg: v('--bg'),
+    text: v('--text'),
+    textDim: v('--text-dim'),
+    textFaint: v('--text-faint'),
+    border: v('--border'),
+    bgHover: v('--bg-hover'),
+    accent: v('--accent'),
+    accentDim: v('--accent-dim'),
+    link: v('--link')
+  }
+}
+
+/** Resolved theme/accent colors for canvas drawing (canvas can't use `var(...)`). App.tsx
+ *  writes `data-theme` and the accent variables onto the root element in its own effects,
+ *  which run *after* a child component's — so re-read one frame later, once the new
+ *  palette is actually on the DOM. */
+export function useGraphColors(): GraphColors {
+  const theme = useStore((s) => s.theme)
+  const accent = useStore((s) => s.accent)
+  const [colors, setColors] = useState(readGraphColors)
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setColors(readGraphColors()))
+    return () => cancelAnimationFrame(raf)
+  }, [theme, accent])
+  return colors
+}
+
 export function GraphView(): React.JSX.Element {
   const index = useStore((s) => s.index)
   const activePath = useStore((s) => s.activePath)
@@ -25,8 +69,31 @@ export function GraphView(): React.JSX.Element {
   const [nodeSize, setNodeSize] = useState(1)
   const [linkDist, setLinkDist] = useState(40)
   const [repel, setRepel] = useState(60)
+  const colors = useGraphColors()
 
-  const data = useMemo(() => index.graph(), [index])
+  // index.graph() mints all-new node objects on every index rebuild (~200ms after each
+  // keystroke while this pane is open). force-graph stores x/y/vx/vy on the node objects
+  // themselves, so reuse (mutate) the previous object for every id that survives — only
+  // genuinely new notes get fresh nodes and a fresh random position. Links can stay plain
+  // {source, target} id pairs; the lib resolves them against the node array.
+  const nodesRef = useRef(new Map<string, GraphNode>())
+  const data = useMemo(() => {
+    const g = index.graph()
+    const next = new Map<string, GraphNode>()
+    const nodes = g.nodes.map((n) => {
+      const prev = nodesRef.current.get(n.id)
+      const node = prev ?? n
+      if (prev) {
+        prev.name = n.name
+        prev.degree = n.degree
+        prev.phantom = n.phantom
+      }
+      next.set(n.id, node)
+      return node
+    })
+    nodesRef.current = next
+    return { nodes, links: g.links }
+  }, [index])
 
   // Filter nodes/links per the toggles. Node object identity is preserved so the layout
   // doesn't fully reset when toggling (force-graph keeps each node's x/y by reference).
@@ -158,49 +225,61 @@ export function GraphView(): React.JSX.Element {
         )}
       </div>
 
-      <Suspense fallback={<div className="view-loading">Loading graph…</div>}>
-        <ForceGraph2D
-          ref={fgRef}
-          graphData={shown}
-          width={size.w}
-          height={size.h}
-          backgroundColor="#1a1a1e"
-          nodeRelSize={4}
-          linkColor={(l: GraphLink) => {
-            if (!matched) return '#3a3a44'
-            return matched.has(endpointId(l.source)) && matched.has(endpointId(l.target)) ? '#5663c9' : '#26262e'
-          }}
-          linkWidth={1}
-          d3VelocityDecay={0.3}
-          onNodeClick={(node: GraphNode) => {
-            if (!node.phantom) openNote(node.id)
-          }}
-          nodeCanvasObject={(node: GraphNode & { x?: number; y?: number }, ctx: CanvasRenderingContext2D, scale: number) => {
-            const r = Math.max(3, Math.min(10, 3 + node.degree)) * nodeSize // size by degree
-            const x = node.x ?? 0
-            const y = node.y ?? 0
-            const isActive = node.id === activePath
-            const isMatch = matched ? matched.has(node.id) : null
-            ctx.beginPath()
-            ctx.arc(x, y, r, 0, 2 * Math.PI)
-            ctx.fillStyle =
-              isMatch === false
-                ? '#34343c' // searching, not a match → dimmed
-                : isMatch || isActive
-                  ? '#7c8cff'
-                  : node.phantom
-                    ? '#4a4a52'
-                    : '#8fa1ff'
-            ctx.fill()
-            if (isMatch || showLabels || scale > 1.2) {
-              ctx.font = `${11 / scale + 3}px -apple-system, sans-serif`
-              ctx.fillStyle = isMatch === false ? '#4d4d55' : isMatch ? '#dfe2ff' : '#b8b8c4'
-              ctx.textAlign = 'center'
-              ctx.fillText(node.name, x, y + r + 9)
-            }
-          }}
-        />
-      </Suspense>
+      {data.nodes.length === 0 || data.links.length === 0 ? (
+        <div className="bases-empty">
+          <p className="empty-note">
+            {data.nodes.length === 0
+              ? 'No notes yet — create one to start your graph.'
+              : 'Link notes with [[wikilinks]] to grow the graph.'}
+          </p>
+        </div>
+      ) : (
+        <Suspense fallback={<div className="view-loading">Loading graph…</div>}>
+          <ForceGraph2D
+            ref={fgRef}
+            graphData={shown}
+            width={size.w}
+            height={size.h}
+            backgroundColor={colors.bg}
+            nodeRelSize={4}
+            linkColor={(l: GraphLink) => {
+              if (!matched) return colors.border
+              return matched.has(endpointId(l.source)) && matched.has(endpointId(l.target))
+                ? colors.accentDim
+                : colors.bgHover
+            }}
+            linkWidth={1}
+            d3VelocityDecay={0.3}
+            onNodeClick={(node: GraphNode) => {
+              if (!node.phantom) openNote(node.id)
+            }}
+            nodeCanvasObject={(node: GraphNode & { x?: number; y?: number }, ctx: CanvasRenderingContext2D, scale: number) => {
+              const r = Math.max(3, Math.min(10, 3 + node.degree)) * nodeSize // size by degree
+              const x = node.x ?? 0
+              const y = node.y ?? 0
+              const isActive = node.id === activePath
+              const isMatch = matched ? matched.has(node.id) : null
+              ctx.beginPath()
+              ctx.arc(x, y, r, 0, 2 * Math.PI)
+              ctx.fillStyle =
+                isMatch === false
+                  ? colors.border // searching, not a match → dimmed
+                  : isMatch || isActive
+                    ? colors.accent
+                    : node.phantom
+                      ? colors.textFaint
+                      : colors.link
+              ctx.fill()
+              if (isMatch || showLabels || scale > 1.2) {
+                ctx.font = `${11 / scale + 3}px -apple-system, sans-serif`
+                ctx.fillStyle = isMatch === false ? colors.textFaint : isMatch ? colors.text : colors.textDim
+                ctx.textAlign = 'center'
+                ctx.fillText(node.name, x, y + r + 9)
+              }
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

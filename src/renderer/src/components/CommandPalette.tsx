@@ -71,12 +71,28 @@ export function CommandPalette(): React.JSX.Element | null {
       { id: 'tags', label: 'Open Tags', icon: '#', run: () => act(() => openTag(null)) },
       { id: 'assets', label: 'Open Assets', icon: '⧉', run: () => act(() => openView('assets')) },
       { id: 'reload', label: 'Reload / re-scan vault folder', icon: '⟳', run: () => act(() => void reloadVault()) },
+      ...(activePath
+        ? [
+            {
+              id: 'export-pdf',
+              label: 'Export note as PDF…',
+              icon: '⤓',
+              run: () =>
+                act(() =>
+                  void useStore
+                    .getState()
+                    .saveActive()
+                    .then(() => window.verso.exportPdf(activePath.replace(/\.md$/i, '').split('/').pop() ?? 'note'))
+                )
+            }
+          ]
+        : []),
       { id: 'theme', label: 'Toggle light / dark theme', icon: '☾', run: () => act(() => toggleTheme()) },
       { id: 'settings', label: 'Open Settings', icon: '⚙', run: () => act(() => openModal('settings')) },
       { id: 'help', label: 'Open Help & shortcuts', icon: '?', run: () => act(() => openModal('help')) }
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [templates, files]
+    [templates, files, activePath]
   )
 
   // Most-recently-opened notes (deduped, newest first), for the empty-query view.
@@ -128,10 +144,21 @@ export function CommandPalette(): React.JSX.Element | null {
 
   if (!open) return null
 
+  // True when the selection last moved by keyboard — only then do we auto-scroll
+  // (scrolling on hover-driven selection would fight the user's mouse wheel).
+  const kbdNav = useRef(false)
   const onKey = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') return e.preventDefault(), close()
-    if (e.key === 'ArrowDown') return e.preventDefault(), setSel((s) => Math.min(items.length - 1, s + 1))
-    if (e.key === 'ArrowUp') return e.preventDefault(), setSel((s) => Math.max(0, s - 1))
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      kbdNav.current = true
+      return setSel((s) => Math.min(items.length - 1, s + 1))
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      kbdNav.current = true
+      return setSel((s) => Math.max(0, s - 1))
+    }
     if (e.key === 'Enter') {
       e.preventDefault()
       items[sel]?.run()
@@ -158,7 +185,19 @@ export function CommandPalette(): React.JSX.Element | null {
             <div
               key={it.id}
               className={'palette-item' + (i === sel ? ' sel' : '')}
-              onMouseEnter={() => setSel(i)}
+              // Keep the keyboard selection in view — the list is scrollable and
+              // arrow-key users otherwise lose the highlight below the fold.
+              ref={
+                i === sel
+                  ? (el) => {
+                      if (kbdNav.current) el?.scrollIntoView({ block: 'nearest' })
+                    }
+                  : undefined
+              }
+              onMouseEnter={() => {
+                kbdNav.current = false
+                setSel(i)
+              }}
               onMouseDown={(e) => {
                 e.preventDefault()
                 it.run()
