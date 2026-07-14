@@ -1,9 +1,12 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import type { NoteFile, ParsedNote } from '@shared/types'
 import { parseBlocks, serializeBlocks, type Block } from '@vlib/blocks'
 import { passesFilter, type Base } from '@vlib/bases'
 import { normTag } from '@vlib/supertags'
+import { dailyDateOf, formatLong, todayISO } from '@vlib/dates'
+import { resolveTarget, pathForNewNote } from '@vlib/links'
 import { useApp } from './state'
+import { BlockView } from './reader'
 
 // ---------------------------------------------------------------------------
 // Folder tree (drawer) — same shape as the desktop sidebar's file tree.
@@ -72,7 +75,6 @@ export function Drawer(): React.JSX.Element {
   const drawerOpen = useApp((s) => s.drawerOpen)
   const setDrawer = useApp((s) => s.setDrawer)
   const openView = useApp((s) => s.openView)
-  const openJournal = useApp((s) => s.openJournal)
   const openNote = useApp((s) => s.openNote)
   const [open, setOpen] = useState<Set<string>>(new Set())
   const tree = useMemo(() => buildTree(files), [files])
@@ -97,7 +99,7 @@ export function Drawer(): React.JSX.Element {
         <div className="drawer-head">{root.split('/').pop() || 'vault'}</div>
         <div className="drawer-nav">
           <div className="nav-item" onClick={() => openView('notes')}>🗒 Notes</div>
-          <div className="nav-item" onClick={() => void openJournal()}>☀ Journal</div>
+          <div className="nav-item" onClick={() => openView('journal')}>☀ Journal</div>
           <div className="nav-item" onClick={() => openView('todos')}>✓ Todos</div>
         </div>
         {bases.length > 0 && (
@@ -157,7 +159,7 @@ export function BaseScreen({ base }: { base: Base }): React.JSX.Element {
   const scanning = useApp((s) => s.scanning)
   const openNote = useApp((s) => s.openNote)
   const rows = useMemo(() => baseRows(base, parsed), [base, parsed])
-  const cols = base.columns.filter((c) => c !== 'name' && c !== 'cover' && c !== 'backlinks')
+  const cols = ['name', ...base.columns.filter((c) => c !== 'name' && c !== 'cover' && c !== 'backlinks')]
   const groups = useMemo(() => {
     if (!base.groupKey) return [{ label: '', rows }]
     const by = new Map<string, ParsedNote[]>()
@@ -168,32 +170,110 @@ export function BaseScreen({ base }: { base: Base }): React.JSX.Element {
     return [...by.entries()].map(([label, rows]) => ({ label, rows }))
   }, [rows, base.groupKey])
 
+  if (scanning && rows.length === 0) return <div className="empty">Scanning vault…</div>
+  if (!scanning && rows.length === 0) return <div className="empty">No notes match this base.</div>
   return (
-    <div className="list">
-      {scanning && rows.length === 0 && <div className="empty">Scanning vault…</div>}
-      {groups.map((g) => (
-        <div key={g.label}>
-          {g.label && <div className="group-head">{g.label}</div>}
-          {g.rows.map((n) => (
-            <div key={n.path} className="row" onClick={() => void openNote(n.path)}>
-              <div className="row-name">{n.name}</div>
-              {cols.length > 0 && (
-                <div className="row-props">
+    <div className="db-scroll">
+      <table className="db-table">
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c}>{c}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g) => (
+            <Fragment key={g.label}>
+              {g.label && (
+                <tr className="db-group">
+                  <td colSpan={cols.length}>{g.label}</td>
+                </tr>
+              )}
+              {g.rows.map((n) => (
+                <tr key={n.path} onClick={() => void openNote(n.path)}>
                   {cols.map((c) => {
                     const v = cellValue(n, c)
-                    return v == null || v === '' ? null : (
-                      <span key={c} className="prop-pill">
-                        {c}: {String(v)}
-                      </span>
+                    return (
+                      <td key={c} className={c === 'name' ? 'db-title' : ''}>
+                        {v == null || v === '' ? '' : String(v)}
+                      </td>
                     )
                   })}
-                </div>
-              )}
-            </div>
+                </tr>
+              ))}
+            </Fragment>
           ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Journal — a scrollable feed of daily notes, newest first (like the desktop
+// journal, phone-shaped). Scroll down to reach previous days.
+// ---------------------------------------------------------------------------
+
+function DaySection({ path, date }: { path: string; date: string }): React.JSX.Element {
+  const text = useApp((s) => s.texts[path] ?? '')
+  const files = useApp((s) => s.files)
+  const openNote = useApp((s) => s.openNote)
+  const saveNote = useApp((s) => s.saveNote)
+  const doc = useMemo(() => parseBlocks(text), [text])
+  const onWikilink = (target: string): void => {
+    const hit = resolveTarget(target, files.map((f) => f.path))
+    void openNote(hit ?? pathForNewNote(target))
+  }
+  const onToggleTask = (id: number): void => {
+    const next = doc.blocks.map((b) => (b.id === id && b.type === 'task' ? { ...b, checked: !b.checked } : b))
+    void saveNote(path, serializeBlocks(next, doc.frontmatter))
+  }
+  return (
+    <section className="day">
+      <div className="day-head" onClick={() => void openNote(path)}>
+        {formatLong(date)}
+        {date === todayISO() && <span className="day-today">today</span>}
+        <span className="day-edit">✎</span>
+      </div>
+      <div className="day-body">
+        {doc.blocks.map((b) => (
+          <BlockView key={b.id} b={b} onWikilink={onWikilink} onToggleTask={onToggleTask} />
+        ))}
+        {doc.blocks.length === 0 && <div className="empty small">Empty day.</div>}
+      </div>
+    </section>
+  )
+}
+
+export function JournalScreen(): React.JSX.Element {
+  const files = useApp((s) => s.files)
+  const openJournal = useApp((s) => s.openJournal)
+  const [limit, setLimit] = useState(14)
+  const days = useMemo(
+    () =>
+      files
+        .map((f) => ({ path: f.path, date: dailyDateOf(f.path) }))
+        .filter((d): d is { path: string; date: string } => d.date !== null)
+        .sort((a, b) => b.date.localeCompare(a.date)),
+    [files]
+  )
+  const hasToday = days[0]?.date === todayISO()
+  const grow = (e: React.UIEvent<HTMLDivElement>): void => {
+    const el = e.currentTarget
+    if (el.scrollTop + el.clientHeight > el.scrollHeight - 500) setLimit((l) => (l < days.length ? l + 14 : l))
+  }
+  return (
+    <div className="list journal" onScroll={grow}>
+      {!hasToday && (
+        <div className="day-head start-today" onClick={() => void openJournal()}>
+          ＋ Start today&rsquo;s entry — {formatLong(todayISO())}
         </div>
+      )}
+      {days.slice(0, limit).map((d) => (
+        <DaySection key={d.path} path={d.path} date={d.date} />
       ))}
-      {!scanning && rows.length === 0 && <div className="empty">No notes match this base.</div>}
+      {days.length === 0 && <div className="empty">No journal entries yet — use ＋ to capture one.</div>}
     </div>
   )
 }

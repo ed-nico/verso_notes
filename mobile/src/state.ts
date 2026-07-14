@@ -9,7 +9,7 @@ import { normalizeBases, type Base } from '@vlib/bases'
 export const DEFAULT_ROOT = '/storage/emulated/0/Verso'
 
 /** Which main screen is showing (the nav stack overlays notes on top). */
-export type View = 'notes' | 'todos' | 'base'
+export type View = 'notes' | 'todos' | 'base' | 'journal'
 
 interface MobileState {
   fs: VaultFS | null

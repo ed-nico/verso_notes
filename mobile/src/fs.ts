@@ -77,7 +77,10 @@ class ShimFS implements VaultFS {
     ['Projects/Alpha.md', '---\nstatus: active\npriority: 1\n---\n# Alpha\n\n- links back to [[Welcome]]\n- `inline code` and *italics* and [a url](https://example.com)\n- [ ] ship the beta\n'],
     ['Projects/Beta.md', '---\nstatus: done\npriority: 2\n---\n- finished project\n'],
     ['Books/Dune.md', '---\nstatus: active\nrating: 5\n---\n- a classic\n'],
+    ['Table Demo.md', '# Demo\n\n| Col A | Col B |\n| --- | --- |\n| one | **bold** |\n| two | [[Welcome]] |\n'],
     ['Daily/2026/07/2026-07-11.md', '- an existing journal entry\n'],
+    ['Daily/2026/07/2026-07-10.md', '- older day one\n'],
+    ['Daily/2026/07/2026-07-09.md', '- older day two\n- [ ] journal task\n'],
     ['.verso/bases.json', JSON.stringify([{ id: 'b1', name: 'Active things', folder: '', tag: '', filters: [{ key: 'status', op: 'is', value: 'active' }], columns: ['name', 'status', 'priority'], groupKey: '', aggregates: {}, sortKey: 'name', sortDir: 'asc', layout: 'table' }])]
   ])
 

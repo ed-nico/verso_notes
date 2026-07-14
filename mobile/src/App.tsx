@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { App as CapApp } from '@capacitor/app'
-import { parseBlocks, serializeBlocks, isList, type Block } from '@vlib/blocks'
+import { parseBlocks, serializeBlocks } from '@vlib/blocks'
 import { resolveTarget, pathForNewNote, dirname } from '@vlib/links'
 import { useApp, isNative, DEFAULT_ROOT } from './state'
 import { FolderPicker } from './fs'
 import { renderInline } from './inline'
-import { Drawer, BaseScreen, TodosScreen } from './screens'
+import { Drawer, BaseScreen, TodosScreen, JournalScreen } from './screens'
+import { BlockView } from './reader'
 
 /** First-run screen: point the app at the synced vault folder. */
 function Setup(): React.JSX.Element {
@@ -132,46 +133,6 @@ function Capture(): React.JSX.Element {
   )
 }
 
-/** One rendered block in the reader. */
-function BlockView({
-  b,
-  onWikilink,
-  onToggleTask
-}: {
-  b: Block
-  onWikilink: (t: string) => void
-  onToggleTask: (id: number) => void
-}): React.JSX.Element {
-  const opts = { onWikilink, onUrl: (u: string) => window.open(u, '_blank') }
-  if (b.type === 'code')
-    return (
-      <pre className="code">
-        <code>{b.text}</code>
-      </pre>
-    )
-  if (b.type === 'table') return <pre className="code table">{b.text}</pre>
-  if (b.type === 'heading') {
-    const H = `h${Math.min(b.level || 1, 4)}` as 'h1' | 'h2' | 'h3' | 'h4'
-    return <H>{renderInline(b.text, opts)}</H>
-  }
-  if (b.type === 'task')
-    return (
-      <div className="li task" style={{ marginLeft: b.level * 18 }}>
-        <input type="checkbox" checked={!!b.checked} onChange={() => onToggleTask(b.id)} />
-        <span className={b.checked ? 'done' : ''}>{renderInline(b.text, opts)}</span>
-      </div>
-    )
-  if (isList(b))
-    return (
-      <div className="li" style={{ marginLeft: b.level * 18 }}>
-        <span className="dot">{b.ordered ? `${b.ordinal ?? 1}.` : '•'}</span>
-        <span>{renderInline(b.text, opts)}</span>
-      </div>
-    )
-  if (b.text === '---') return <hr />
-  return <p>{renderInline(b.text, opts)}</p>
-}
-
 /** Reader + editor for the note on top of the nav stack. */
 function Note({ path }: { path: string }): React.JSX.Element {
   const text = useApp((s) => s.texts[path] ?? '')
@@ -246,6 +207,18 @@ function ViewScreen(): React.JSX.Element {
           <div className="title">Todos</div>
         </header>
         <TodosScreen />
+      </div>
+    )
+  }
+  if (view === 'journal') {
+    return (
+      <div className="screen">
+        <header>
+          <MenuButton />
+          <div className="title">Journal</div>
+        </header>
+        <JournalScreen />
+        <Capture />
       </div>
     )
   }
