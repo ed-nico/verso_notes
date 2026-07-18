@@ -36,7 +36,12 @@ import { addIgnoreWord, checkWords, setIgnoreWords, suggestWord } from './spell.
 
 // Must run before app is ready: lets `verso://` load in <img> and via fetch.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'verso', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+  {
+    scheme: 'verso',
+    // corsEnabled: without it, cors-mode fetch() (pdf.js) gets an opaque status-0
+    // response — <img>/<video> don't care, but the PDF viewer breaks.
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+  }
 ])
 import type { NoteContent, WriteResult } from '../shared/types.js'
 import { PROD_CSP } from '../shared/csp.js'
@@ -670,7 +675,12 @@ function registerAssetProtocol(): void {
       if (!abs) return new Response('Not found', { status: 404 })
       // `await` so a rejection (file deleted between resolve and fetch) lands in
       // the catch below as a 400 instead of an unhandled protocol error.
-      return await net.fetch(pathToFileURL(abs).toString())
+      const res = await net.fetch(pathToFileURL(abs).toString())
+      // The renderer's origin isn't verso://, so cors-mode fetch() consumers
+      // (pdf.js) need an explicit allow header; element loads ignore it.
+      const headers = new Headers(res.headers)
+      headers.set('Access-Control-Allow-Origin', '*')
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
     } catch {
       return new Response('Bad request', { status: 400 })
     }

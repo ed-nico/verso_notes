@@ -132,6 +132,13 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   v2 (documented in the file header): AND within a group, uppercase `OR` between groups,
   `-` negation, hierarchical `#tag` (matches `#tag/sub`), `before:`/`after:` dates,
   `prop:key[=value]`, todo/done, `[[Page]]`, words.
+- **`compile.ts`** — Compile mode: DFS-stitches a hub note + its wikilinked notes (reading
+  order, cycle-safe, depth/count caps) into one linear document — headings demoted per depth,
+  `^anchors` stripped, links optionally flattened. Rendered by `CompileView` (the `compile`
+  modal, opened from the page ⋯ menu / palette on the active note).
+- **`tend.ts`** — the Tend ("gardener") report: suggested connections (note names co-mentioned
+  without links, one combined-alternation scan), orphans, stubs, stale notes, broken links.
+  Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`).
 - **`bases.ts`** — Base type + filtering helpers (no storage; persistence is the vault file
   above). **`components/BaseView.tsx`** is the shared renderer (table/gallery) used by both the
   Bases page (`BasesView`, interactive) and inline `{{base <name> [limit:N] [layout:…]}}`

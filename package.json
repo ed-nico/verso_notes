@@ -1,6 +1,6 @@
 {
   "name": "verso",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "A local-first note app: a mesh of Obsidian and Logseq, built on Markdown.",
   "main": "./out/main/index.js",
   "author": "Ed Nico <ed.nico222@gmail.com>",

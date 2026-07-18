@@ -80,7 +80,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <button
                 key={a.key}
                 className={'accent-swatch' + (accent === a.key ? ' active' : '')}
-                style={{ background: a.accent }}
+                style={{ background: theme === 'light' ? a.light.accent : a.dark.accent }}
                 title={a.label}
                 aria-label={`Accent: ${a.label}`}
                 onClick={() => setAccent(a.key)}

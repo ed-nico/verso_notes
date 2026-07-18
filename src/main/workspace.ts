@@ -408,6 +408,21 @@ function resolveInRoot(rel: string): string {
   return abs
 }
 
+/** No path segment may be empty or dot-prefixed: the app never legitimately
+ *  touches files under `.git/`, `.verso/`, `.obsidian/`, … through the generic
+ *  file channels (they have dedicated, fixed-path accessors), and writing there
+ *  is an escalation surface — e.g. a compromised renderer planting a git hook. */
+function hasCleanSegments(rel: string): boolean {
+  const segs = rel.split('/')
+  return segs.length > 0 && segs.every((s) => s !== '' && !s.startsWith('.'))
+}
+
+/** Guard for the note read/write/create/rename channels: real `.md` paths only.
+ *  Canvases, bases, css, assets each have their own (stricter) entry points. */
+function isSafeNotePath(rel: string): boolean {
+  return isMarkdown(rel) && hasCleanSegments(rel)
+}
+
 /** Read every markdown file in the workspace, for index building. */
 export async function readAllNotes(): Promise<{ path: string; text: string }[]> {
   if (!currentRoot) return []
@@ -445,6 +460,7 @@ function conflictPathFor(rel: string): string {
 }
 
 export async function readNote(rel: string): Promise<string | null> {
+  if (!isSafeNotePath(rel)) return null
   try {
     const abs = resolveInRoot(rel)
     const text = await fs.readFile(abs, 'utf8')
@@ -483,7 +499,7 @@ export interface SnapshotMeta {
 }
 
 export async function listSnapshots(rel: string): Promise<SnapshotMeta[]> {
-  if (!currentRoot) return []
+  if (!currentRoot || !isSafeNotePath(rel)) return [] // rel is joined under .verso/history — never let `..` in
   try {
     const dir = historyDirFor(rel)
     const names = (await fs.readdir(dir)).filter((f) => f.endsWith('.md')).sort().reverse()
@@ -503,7 +519,7 @@ export async function listSnapshots(rel: string): Promise<SnapshotMeta[]> {
 }
 
 export async function readSnapshot(rel: string, stamp: string): Promise<string | null> {
-  if (!currentRoot || !/^[\w:.T-]+$/.test(stamp)) return null
+  if (!currentRoot || !isSafeNotePath(rel) || !/^[\w:.T-]+$/.test(stamp)) return null
   try {
     return await fs.readFile(path.join(historyDirFor(rel), `${stamp}.md`), 'utf8')
   } catch (e) {
@@ -539,6 +555,7 @@ async function maybeSnapshot(rel: string, abs: string): Promise<void> {
 }
 
 export async function writeNote(rel: string, text: string): Promise<WriteResult> {
+  if (!isSafeNotePath(rel)) return { ok: false, error: 'Not a note path' }
   try {
     const abs = resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
@@ -582,6 +599,7 @@ export async function writeNote(rel: string, text: string): Promise<WriteResult>
 }
 
 export async function createNote(rel: string, text: string): Promise<NoteFile | null> {
+  if (!isSafeNotePath(rel)) return null
   try {
     const abs = resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
@@ -597,6 +615,7 @@ export async function createNote(rel: string, text: string): Promise<NoteFile | 
 }
 
 export async function renameNote(oldRel: string, newRel: string): Promise<NoteFile | null> {
+  if (!isSafeNotePath(oldRel) || !isSafeNotePath(newRel)) return null
   try {
     const from = resolveInRoot(oldRel)
     const to = resolveInRoot(newRel)
@@ -626,6 +645,9 @@ export async function renameNote(oldRel: string, newRel: string): Promise<NoteFi
 }
 
 export async function deleteNote(rel: string): Promise<boolean> {
+  // Shared by the note/asset/canvas delete channels, so any extension — but
+  // never dot-paths (.git, .verso, …); those aren't user files.
+  if (!hasCleanSegments(rel)) return false
   try {
     const abs = resolveInRoot(rel)
     noteSelfDelete(rel) // suppress the unlink echo (the renderer already removed it)
@@ -711,7 +733,7 @@ export async function listAssets(): Promise<AssetFile[]> {
 
 /** Resolve a workspace-relative path to an absolute path inside the vault, or null. */
 export function resolveAsset(rel: string): string | null {
-  if (!currentRoot) return null
+  if (!currentRoot || !hasCleanSegments(rel)) return null
   const abs = path.join(currentRoot, rel)
   if (!isWithinRoot(currentRoot, abs)) return null
   if (escapesRoot(abs)) return null
@@ -721,7 +743,7 @@ export function resolveAsset(rel: string): string | null {
 // ---- spatial canvases (`.canvas` files, Obsidian-compatible JSON) ----
 
 function isCanvas(p: string): boolean {
-  return p.toLowerCase().endsWith('.canvas')
+  return p.toLowerCase().endsWith('.canvas') && hasCleanSegments(p)
 }
 
 function canvasMeta(root: string, abs: string, mtimeMs: number): CanvasMeta {

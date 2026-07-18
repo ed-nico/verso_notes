@@ -407,9 +407,17 @@ export function Sidebar(): React.JSX.Element {
           <button className={'nav-item' + (view === 'graph' ? ' active' : '')} onClick={() => openView('graph')}>
             ⦿ Graph
           </button>
+          <button className={'nav-item' + (view === 'tend' ? ' active' : '')} onClick={() => openView('tend')}>
+            ❧ Tend
+          </button>
           <button className={'nav-item' + (view === 'tags' ? ' active' : '')} onClick={() => openView('tags')}>
             # Tags
           </button>
+          <button className={'nav-item' + (view === 'assets' ? ' active' : '')} onClick={() => openView('assets')}>
+            ⧉ Assets
+          </button>
+          {/* Bases stays in the grid's bottom-left cell (with Canvas beside it), so the
+              two expandable items sit on the last row, right above their sub-lists. */}
           <button
             className={'nav-item' + (view === 'database' ? ' active' : '')}
             onClick={() => {
@@ -418,9 +426,6 @@ export function Sidebar(): React.JSX.Element {
             }}
           >
             {bases.length > 0 && <span className="nav-caret">{basesOpen ? '▾' : '▸'}</span>}▦ Bases
-          </button>
-          <button className={'nav-item' + (view === 'assets' ? ' active' : '')} onClick={() => openView('assets')}>
-            ⧉ Assets
           </button>
           <button
             className={'nav-item' + (view === 'canvas' ? ' active' : '')}

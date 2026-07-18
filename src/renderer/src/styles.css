@@ -1,22 +1,33 @@
 :root {
   /* Tells the OS to draw native scrollbars / form controls dark; the light theme flips it. */
   color-scheme: dark;
-  --bg: #1a1a1e;
-  --bg-panel: #1f1f24;
-  --bg-elevated: #26262c;
-  --bg-hover: #2e2e36;
-  --border: #34343c;
-  --text: #d8d8e0;
-  --text-dim: #8a8a96;
-  --text-faint: #5c5c66;
+  --bg: #151519;
+  --bg-panel: #1a1a1f;
+  --bg-elevated: #202026;
+  --bg-hover: #26262e;
+  --border: #2b2b33;
+  --text: #e2e2e8;
+  /* Secondary/tertiary text kept clearly legible on the dark canvas — Eds found
+     the dimmer greys hard to read; prefer erring brighter for these two. */
+  --text-dim: #a6a6b2;
+  --text-faint: #75757f;
   --accent: #7c8cff;
   --accent-dim: #4a4f7a;
   --link: #8fa1ff;
   --heading: #d2823a;
-  --tag: #6fcaa8;
+  --tag: #67bfa0;
   --danger: #e06c75;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  /* Layered elevation shadows — softer in light mode (overridden below). */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 3px 12px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 6px 16px rgba(0, 0, 0, 0.3), 0 24px 56px rgba(0, 0, 0, 0.45);
+}
+
+/* Text selection tracks the accent instead of the browser default. */
+::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 * {
@@ -182,7 +193,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-md);
 }
 .vault-backdrop {
   position: fixed;
@@ -387,7 +398,7 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 4px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-md);
 }
 .ctx-item {
   padding: 7px 10px;
@@ -475,9 +486,9 @@ button {
   line-height: 1.3;
   color: var(--heading);
 }
-.tok-h1 { font-size: 1em; }
-.tok-h2 { font-size: 1em; opacity: 0.88; }
-.tok-h3 { font-size: 1em; font-weight: 600; opacity: 0.78; }
+.tok-h1 { font-size: 1.2em; }
+.tok-h2 { font-size: 1.1em; opacity: 0.88; }
+.tok-h3 { font-size: 1.05em; font-weight: 600; opacity: 0.78; }
 .tok-h4 { font-size: 1em; font-weight: 600; opacity: 0.68; }
 .tok-h5 { font-size: 1em; font-weight: 500; opacity: 0.62; }
 .tok-h6 { font-size: 1em; font-weight: 500; opacity: 0.55; }
@@ -751,7 +762,7 @@ del {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 9px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-md);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -1308,7 +1319,7 @@ del {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--shadow-sm);
 }
 .find-input {
   background: var(--bg);
@@ -1521,7 +1532,7 @@ del {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 .ol-ac-item {
@@ -1611,7 +1622,8 @@ del {
 .bl-row.is-heading:first-child {
   margin-top: 0;
 }
-/* Headings: coloured + bold at body size (no oversized text). */
+/* Headings: coloured + bold, modestly larger than body per level (h4+ stay body-size).
+   .ol-input and .ol-rendered must always share a size — the caret overlay depends on it. */
 .ol-content.tok-heading .ol-input,
 .ol-content.tok-heading .ol-rendered {
   font-weight: 700;
@@ -1620,16 +1632,16 @@ del {
 }
 .ol-content.tok-h1 .ol-input,
 .ol-content.tok-h1 .ol-rendered {
-  font-size: 1em;
+  font-size: 1.2em;
 }
 .ol-content.tok-h2 .ol-input,
 .ol-content.tok-h2 .ol-rendered {
-  font-size: 1em;
+  font-size: 1.1em;
   opacity: 0.88;
 }
 .ol-content.tok-h3 .ol-input,
 .ol-content.tok-h3 .ol-rendered {
-  font-size: 1em;
+  font-size: 1.05em;
   font-weight: 600;
   opacity: 0.78;
 }
@@ -2036,20 +2048,23 @@ select.prop-input {
 /* ---------- Light theme ---------- */
 html[data-theme='light'] {
   color-scheme: light;
-  --bg: #fcfcfb;
-  --bg-panel: #f4f4f1;
+  --bg: #fbfbfa;
+  --bg-panel: #f4f4f2;
   --bg-elevated: #ffffff;
-  --bg-hover: #ebebe7;
-  --border: #e2e2dd;
-  --text: #2b2b30;
-  --text-dim: #6d6d75;
-  --text-faint: #a0a0a8;
+  --bg-hover: #ececea;
+  --border: #e4e4e0;
+  --text: #26262b;
+  --text-dim: #6b6b74;
+  --text-faint: #a3a3ab;
   --accent: #4f5bd5;
-  --accent-dim: #6671e0;
-  --link: #3a4fc4;
+  --accent-dim: #5f6ad8;
+  --link: #3d51cc;
   --heading: #b4561a;
-  --tag: #0a8a63;
-  --danger: #d23b3b;
+  --tag: #0d8862;
+  --danger: #cf3a3a;
+  --shadow-sm: 0 1px 2px rgba(24, 24, 34, 0.08), 0 3px 10px rgba(24, 24, 34, 0.07);
+  --shadow-md: 0 2px 6px rgba(24, 24, 34, 0.07), 0 10px 26px rgba(24, 24, 34, 0.11);
+  --shadow-lg: 0 6px 16px rgba(24, 24, 34, 0.09), 0 24px 52px rgba(24, 24, 34, 0.16);
 }
 
 /* ---------- Nav (back/forward) buttons ---------- */
@@ -2281,7 +2296,7 @@ html[data-theme='light'] {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px 16px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-md);
   /* Interactive: you can move into it and scroll the note. */
   pointer-events: auto;
 }
@@ -2407,7 +2422,7 @@ html[data-theme='light'] {
   background: var(--bg);
 }
 .video-embed.video-stuck .video-frame {
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-md);
 }
 .video-ts-btn {
   background: var(--bg-elevated);
@@ -2464,7 +2479,7 @@ html[data-theme='light'] {
 .pdf-page {
   position: relative;
   background: #fff;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-sm);
   flex-shrink: 0;
 }
 .pdf-page canvas {
@@ -2549,7 +2564,7 @@ html[data-theme='light'] {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 6px 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-md);
 }
 .hl-swatch {
   width: 18px;
@@ -2655,7 +2670,7 @@ html[data-theme='light'] {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 .modal-head {
@@ -2858,7 +2873,7 @@ html[data-theme='light'] {
   border-radius: 8px;
   padding: 10px 14px;
   z-index: 300;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-md);
 }
 
 /* ---------- Properties: cover + date jump ---------- */
@@ -3083,7 +3098,7 @@ input[type='date'].prop-input {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 .palette-input {
@@ -3611,7 +3626,7 @@ body.col-resizing {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-md);
   padding: 10px 12px;
   min-width: 280px;
 }
@@ -3864,7 +3879,7 @@ body.col-resizing {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--shadow-lg);
   padding: 8px;
 }
 .tagpick-head {
@@ -4108,7 +4123,7 @@ body.col-resizing {
   color: var(--text);
   font-size: 14px;
   line-height: 1.5;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18), 0 4px 14px rgba(0, 0, 0, 0.14);
+  box-shadow: var(--shadow-sm);
   cursor: grab;
   transition: box-shadow 0.12s, border-color 0.12s;
 }
@@ -4730,6 +4745,11 @@ body.col-resizing {
 }
 
 /* ---------- Similar notes (right sidebar) ---------- */
+.similar {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 10px;
+}
 .similar-list {
   display: flex;
   flex-direction: column;
@@ -4763,4 +4783,202 @@ body.col-resizing {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ---------- Compile modal ---------- */
+.modal.compile-modal {
+  width: 900px;
+  max-width: 94vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+}
+.compile-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.compile-rail {
+  width: 240px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.compile-controls {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.compile-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.compile-ctl select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.compile-sections {
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.compile-section {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.compile-section:hover {
+  background: var(--bg-hover);
+}
+.compile-section-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.compile-preview {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 24px;
+  min-width: 0;
+}
+.compile-doc p {
+  margin: 0;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.compile-doc h1,
+.compile-doc h2,
+.compile-doc h3,
+.compile-doc h4,
+.compile-doc h5,
+.compile-doc h6 {
+  color: var(--heading);
+  margin: 0.4em 0 0.2em;
+  line-height: 1.3;
+}
+.compile-li {
+  display: flex;
+  gap: 7px;
+  line-height: 1.6;
+  font-size: 14px;
+}
+.compile-dot {
+  color: var(--text-faint);
+}
+.compile-blank {
+  height: 0.7em;
+}
+.compile-code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  background: var(--bg);
+  padding: 0 10px;
+  white-space: pre-wrap;
+}
+.compile-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+.compile-stats {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- Tend (gardener) view ---------- */
+.tend .tend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tend h1 {
+  margin: 0;
+}
+.tend-intro {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 6px 0 18px;
+}
+.tend-empty {
+  color: var(--text-dim);
+  font-size: 14px;
+  margin-top: 24px;
+}
+.tend-section {
+  margin-bottom: 18px;
+}
+.tend-hint {
+  margin-left: 10px;
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.tend-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0 4px 18px;
+  font-size: 13px;
+  border-bottom: 1px solid transparent;
+}
+.tend-row:hover {
+  background: var(--bg-hover);
+  border-radius: 6px;
+}
+.tend-note {
+  color: var(--link);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tend-note:hover {
+  text-decoration: underline;
+}
+.tend-dir {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.tend-detail {
+  flex: 1;
+  color: var(--text-dim);
+  min-width: 0;
+}
+.tend-src {
+  color: var(--text);
+  cursor: pointer;
+}
+.tend-src:hover {
+  text-decoration: underline;
+  color: var(--link);
+}
+.tend-broken {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--danger);
+  white-space: nowrap;
+}
+.tend-more {
+  padding: 4px 0 0 18px;
+  font-size: 12px;
+  color: var(--text-faint);
 }

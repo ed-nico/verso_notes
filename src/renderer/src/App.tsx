@@ -16,6 +16,8 @@ import { JournalView } from './components/JournalView'
 import { Calendar } from './components/Calendar'
 import { HistoryPanel } from './components/HistoryPanel'
 import { TodosView } from './components/TodosView'
+import { TendView } from './components/TendView'
+import { CompileView } from './components/CompileView'
 import { CommandPalette } from './components/CommandPalette'
 import { Settings } from './components/Settings'
 import { Help } from './components/Help'
@@ -57,7 +59,8 @@ const VIEW_TITLE: Record<string, string> = {
   journal: 'Journal',
   todos: 'Todos',
   assets: 'Assets',
-  tags: 'Tags'
+  tags: 'Tags',
+  tend: 'Tend'
 }
 
 function TopBar(): React.JSX.Element {
@@ -79,6 +82,7 @@ function TopBar(): React.JSX.Element {
   const togglePin = useStore((s) => s.togglePin)
   const duplicateNote = useStore((s) => s.duplicateNote)
   const applyTemplateToNote = useStore((s) => s.applyTemplateToNote)
+  const openModal = useStore((s) => s.openModal)
   const isPinned = useStore(
     (s) => !!(s.activePath && (s.parsed[s.activePath]?.frontmatter as { pinned?: unknown } | undefined)?.pinned)
   )
@@ -152,6 +156,7 @@ function TopBar(): React.JSX.Element {
               ? [{ label: '▤ Apply template…', onClick: () => setTplMenu({ x: pageMenu.x, y: pageMenu.y }) }]
               : []),
             { label: 'Duplicate', onClick: () => void duplicateNote(activePath) },
+            { label: '⧉ Compile from links…', onClick: () => openModal('compile') },
             { label: '↺ History…', onClick: () => setHistoryFor(activePath) },
             { label: '⤓ Export as PDF…', onClick: () => void exportActivePdf(activePath, nameOf(activePath)) },
             { label: REVEAL_LABEL, onClick: () => void revealNote(activePath) },
@@ -313,6 +318,7 @@ function MainArea(): React.JSX.Element {
   else if (view === 'tags') content = <TagsView />
   else if (view === 'journal') content = <JournalView />
   else if (view === 'todos') content = <TodosView />
+  else if (view === 'tend') content = <TendView />
   else if (activePath) content = <NoteArea path={activePath} />
   else
     content = (
@@ -361,14 +367,16 @@ export function App(): React.JSX.Element {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
-  // Accent theme: override the palette's accent variables on the root element.
+  // Accent theme: override the palette's accent variables on the root element,
+  // using the variant tuned for the active theme (dark hues wash out on white).
   useEffect(() => {
     const a = ACCENTS.find((x) => x.key === accent) ?? ACCENTS[0]
+    const vars = theme === 'light' ? a.light : a.dark
     const root = document.documentElement
-    root.style.setProperty('--accent', a.accent)
-    root.style.setProperty('--accent-dim', a.accentDim)
-    root.style.setProperty('--link', a.link)
-  }, [accent])
+    root.style.setProperty('--accent', vars.accent)
+    root.style.setProperty('--accent-dim', vars.accentDim)
+    root.style.setProperty('--link', vars.link)
+  }, [accent, theme])
 
   // Vault custom stylesheet (`.verso/custom.css`) — injected as a <style> tag and
   // hot-reloaded when the file changes on disk (via the watcher).
@@ -493,7 +501,9 @@ function SaveErrorToast(): React.JSX.Element | null {
 function Modals(): React.JSX.Element | null {
   const modal = useStore((s) => s.modal)
   const closeModal = useStore((s) => s.closeModal)
+  const activePath = useStore((s) => s.activePath)
   if (modal === 'settings') return <Settings onClose={closeModal} />
   if (modal === 'help') return <Help onClose={closeModal} />
+  if (modal === 'compile' && activePath) return <CompileView path={activePath} onClose={closeModal} />
   return null
 }

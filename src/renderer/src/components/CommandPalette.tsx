@@ -69,10 +69,17 @@ export function CommandPalette(): React.JSX.Element | null {
       { id: 'graph', label: 'Open Graph', icon: '⦿', run: () => act(() => openView('graph')) },
       { id: 'bases', label: 'Open Bases', icon: '▦', run: () => act(() => openView('database')) },
       { id: 'tags', label: 'Open Tags', icon: '#', run: () => act(() => openTag(null)) },
+      { id: 'tend', label: 'Open Tend — suggested links & vault gardening', icon: '❧', run: () => act(() => openView('tend')) },
       { id: 'assets', label: 'Open Assets', icon: '⧉', run: () => act(() => openView('assets')) },
       { id: 'reload', label: 'Reload / re-scan vault folder', icon: '⟳', run: () => act(() => void reloadVault()) },
       ...(activePath
         ? [
+            {
+              id: 'compile',
+              label: 'Compile note from its links…',
+              icon: '⧉',
+              run: () => act(() => openModal('compile'))
+            },
             {
               id: 'export-pdf',
               label: 'Export note as PDF…',
@@ -142,11 +149,12 @@ export function CommandPalette(): React.JSX.Element | null {
     if (sel >= items.length) setSel(Math.max(0, items.length - 1))
   }, [items.length, sel])
 
-  if (!open) return null
-
   // True when the selection last moved by keyboard — only then do we auto-scroll
   // (scrolling on hover-driven selection would fight the user's mouse wheel).
+  // Must be declared before the early return: hooks can't be conditional.
   const kbdNav = useRef(false)
+
+  if (!open) return null
   const onKey = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') return e.preventDefault(), close()
     if (e.key === 'ArrowDown') {
