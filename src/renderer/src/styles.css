@@ -1375,6 +1375,83 @@ del {
   padding: 0 1px;
 }
 
+/* Word-style formatting toolbar: sticks to the top of the editor's scroll viewport.
+   Buttons act on the focused block's textarea selection (see BlockEditor's applyInline). */
+.fmt-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-sm);
+}
+.fmt-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fmt-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.fmt-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fmt-btn.on {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.fmt-bold {
+  font-weight: 700;
+}
+.fmt-italic {
+  font-style: italic;
+  font-family: Georgia, 'Times New Roman', serif;
+}
+.fmt-strike {
+  text-decoration: line-through;
+}
+.fmt-hl {
+  text-decoration: underline;
+  text-decoration-color: #ffd54f;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 3px;
+}
+.fmt-mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+}
+.fmt-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ==highlight== token in rendered markdown. */
+mark.tok-mark {
+  background: color-mix(in srgb, #ffd54f 32%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .ol-fold {
   flex-shrink: 0;
   width: 16px;
@@ -1989,13 +2066,38 @@ select.prop-input {
   font-size: 1.8em;
   margin: 0 0 8px;
 }
-.todos-toggle {
-  font-size: 12px;
-  color: var(--text-dim);
+/* Things-style shelf tabs: All / Today / Upcoming / Someday / Logbook. */
+.todo-shelves {
   display: flex;
-  align-items: center;
-  gap: 5px;
+  gap: 2px;
+  margin: 2px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+.shelf-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 6px 10px 7px;
+  font-size: 13px;
+  color: var(--text-dim);
   cursor: pointer;
+}
+.shelf-btn:hover {
+  color: var(--text);
+}
+.shelf-btn.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.shelf-count {
+  margin-left: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.shelf-btn.active .shelf-count {
+  color: var(--accent);
 }
 .todo-group {
   margin: 18px 0;
@@ -2065,6 +2167,21 @@ html[data-theme='light'] {
   --shadow-sm: 0 1px 2px rgba(24, 24, 34, 0.08), 0 3px 10px rgba(24, 24, 34, 0.07);
   --shadow-md: 0 2px 6px rgba(24, 24, 34, 0.07), 0 10px 26px rgba(24, 24, 34, 0.11);
   --shadow-lg: 0 6px 16px rgba(24, 24, 34, 0.09), 0 24px 52px rgba(24, 24, 34, 0.16);
+}
+
+/* Paper — a warm dark theme: charcoal-brown canvas, cream text, taupe secondaries
+   ("paper by lamplight"). Everything not overridden inherits the cool-dark :root
+   values, and ACCENTS' dark variants apply. Pairs well with the Serif editor font. */
+html[data-theme='paper'] {
+  color-scheme: dark;
+  --bg: #1d1b18;
+  --bg-panel: #232019;
+  --bg-elevated: #282520;
+  --bg-hover: #2e2a24;
+  --border: #383329;
+  --text: #e8e4dc;
+  --text-dim: #b1a999;
+  --text-faint: #8d877c;
 }
 
 /* ---------- Nav (back/forward) buttons ---------- */
@@ -4638,6 +4755,7 @@ body.col-resizing {
   .split-pane,
   .backlinks,
   .find-bar,
+  .fmt-bar,
   .save-toast,
   .ctx-menu,
   .ol-tail {

@@ -83,9 +83,9 @@ function ResizableImage({
 
 const WORD_TOKEN_RE = /[A-Za-z][A-Za-z']*/g
 
-// ![alt](src) | [text](url) | [[wikilink]] | `code` | **bold** | *italic* | _italic_ | #tag | bare URL | ~~strike~~
+// ![alt](src) | [text](url) | [[wikilink]] | `code` | **bold** | *italic* | _italic_ | #tag | bare URL | ~~strike~~ | ==highlight==
 const MD_RE =
-  /!\[([^\]\n]*)\]\(([^)\n]+)\)|\[([^\]\n]+?)\]\(([^)\n]+)\)|\[\[([^\]\n]+?)\]\]|(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\*[^*\n]+?\*)|(?<![A-Za-z0-9])_([^_\n]+?)_(?![A-Za-z0-9])|(?<=^|\s)#([\p{L}\d_][\p{L}\d_/-]*)|(https?:\/\/[^\s<>]+)|(~~[^~\n]+?~~)/gu
+  /!\[([^\]\n]*)\]\(([^)\n]+)\)|\[([^\]\n]+?)\]\(([^)\n]+)\)|\[\[([^\]\n]+?)\]\]|(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\*[^*\n]+?\*)|(?<![A-Za-z0-9])_([^_\n]+?)_(?![A-Za-z0-9])|(?<=^|\s)#([\p{L}\d_][\p{L}\d_/-]*)|(https?:\/\/[^\s<>]+)|(~~[^~\n]+?~~)|(==[^=\n]+?==)/gu
 
 /** Render inline Markdown of a single block to React nodes (recurses for nesting). */
 export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] {
@@ -326,6 +326,12 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
       if (trail) nodes.push(trail)
     } else if (m[12] !== undefined) {
       nodes.push(<del key={key++}>{renderInline(m[12].slice(2, -2), opts)}</del>)
+    } else if (m[13] !== undefined) {
+      nodes.push(
+        <mark key={key++} className="tok-mark">
+          {renderInline(m[13].slice(2, -2), opts)}
+        </mark>
+      )
     }
     last = m.index + m[0].length
   }

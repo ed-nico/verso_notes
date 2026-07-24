@@ -53,6 +53,9 @@ export type HistEntry =
   | { kind: 'view'; view: ViewMode; baseId?: string | null; tag?: string | null; canvasPath?: string | null }
 
 /** Selectable editor fonts (the note-writing area). */
+/** Selectable UI themes: cool dark (default), warm dark ("paper"), and light. */
+export type ThemeName = 'dark' | 'paper' | 'light'
+
 export const EDITOR_FONTS: { key: string; label: string; stack: string }[] = [
   { key: 'sans', label: 'Sans', stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif" },
   { key: 'serif', label: 'Serif', stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif" },
@@ -138,7 +141,7 @@ interface VersoState {
   view: ViewMode
   /** A pending request to open the in-note find on `path` for `query` (from sidebar search). */
   findRequest: { path: string; query: string } | null
-  theme: 'light' | 'dark'
+  theme: ThemeName
   /** Accent theme key (see ACCENTS). */
   accent: string
   /** Contents of the vault's `.verso/custom.css`, injected into the page (or null). */
@@ -173,6 +176,7 @@ interface VersoState {
   rightbarOpen: boolean
 
   toggleTheme: () => void
+  setTheme: (t: ThemeName) => void
   setAccent: (key: string) => void
   /** Re-read `.verso/custom.css` from the vault (called on load and on file change). */
   reloadCustomCss: () => Promise<void>
@@ -615,7 +619,7 @@ export const useStore = create<VersoState>((set, get) => {
     paletteOpen: false,
     sidebarOpen: localStorage.getItem('verso-sidebar') !== 'closed',
     rightbarOpen: localStorage.getItem('verso-rightbar') !== 'closed',
-    theme: (localStorage.getItem('verso-theme') as 'light' | 'dark' | null) ?? 'dark',
+    theme: (localStorage.getItem('verso-theme') as ThemeName | null) ?? 'dark',
     accent: localStorage.getItem('verso-accent') ?? 'indigo',
     customCss: null,
     editorFont: localStorage.getItem('verso-font') ?? 'sans',
@@ -626,7 +630,12 @@ export const useStore = create<VersoState>((set, get) => {
     saveError: null,
 
     toggleTheme: () => {
-      const theme = get().theme === 'dark' ? 'light' : 'dark'
+      // Cycle dark → paper → light → dark (palette command; Settings picks directly).
+      const cur = get().theme
+      get().setTheme(cur === 'dark' ? 'paper' : cur === 'paper' ? 'light' : 'dark')
+    },
+
+    setTheme: (theme) => {
       localStorage.setItem('verso-theme', theme)
       set({ theme })
     },

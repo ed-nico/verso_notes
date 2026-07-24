@@ -94,7 +94,7 @@ export function CommandPalette(): React.JSX.Element | null {
             }
           ]
         : []),
-      { id: 'theme', label: 'Toggle light / dark theme', icon: '☾', run: () => act(() => toggleTheme()) },
+      { id: 'theme', label: 'Cycle theme (dark / paper / light)', icon: '☾', run: () => act(() => toggleTheme()) },
       { id: 'settings', label: 'Open Settings', icon: '⚙', run: () => act(() => openModal('settings')) },
       { id: 'help', label: 'Open Help & shortcuts', icon: '?', run: () => act(() => openModal('help')) }
     ],

@@ -18,6 +18,9 @@ function Group({ title, todos, showDate }: { title: string; todos: Todo[]; showD
   )
 }
 
+/** Things-style shelves across the top: one slice of the task list at a time. */
+type Shelf = 'all' | 'today' | 'upcoming' | 'someday' | 'logbook'
+
 export function TodosView(): React.JSX.Element {
   // Recompute on the debounced index rebuild, NOT on `texts`: the texts map is
   // mutated in place on the typing hot path (same identity), so a [texts] memo
@@ -26,7 +29,7 @@ export function TodosView(): React.JSX.Element {
   // aggregateTodos is per-note cached, so each refresh is O(changed notes).
   const index = useStore((s) => s.index)
   const today = todayISO()
-  const [showDone, setShowDone] = useState(false)
+  const [shelf, setShelf] = useState<Shelf>('all')
 
   const { overdueG, backlogG, todayG, upcoming, someday, done } = useMemo(() => {
     const texts = useStore.getState().texts
@@ -50,33 +53,57 @@ export function TodosView(): React.JSX.Element {
     return { overdueG, backlogG, todayG, upcoming, someday, done }
   }, [index, today])
 
-  const total =
-    overdueG.length +
-    backlogG.length +
-    todayG.length +
-    upcoming.reduce((n, g) => n + g.todos.length, 0) +
-    someday.length
+  const upcomingCount = upcoming.reduce((n, g) => n + g.todos.length, 0)
+  const counts: Record<Shelf, number> = {
+    all: overdueG.length + backlogG.length + todayG.length + upcomingCount + someday.length,
+    today: overdueG.length + todayG.length, // overdue belongs to Today, Things-style
+    upcoming: upcomingCount,
+    someday: someday.length + backlogG.length,
+    logbook: done.length
+  }
+  const SHELVES: { key: Shelf; label: string }[] = [
+    { key: 'all', label: 'All' },
+    { key: 'today', label: 'Today' },
+    { key: 'upcoming', label: 'Upcoming' },
+    { key: 'someday', label: 'Someday' },
+    { key: 'logbook', label: 'Logbook' }
+  ]
+
+  const show = (s: Shelf): boolean => shelf === s || (shelf === 'all' && s !== 'logbook')
 
   return (
     <div className="scroll-area">
       <div className="doc todos-doc">
         <div className="todos-head">
           <h1>Todos</h1>
-          <label className="todos-toggle">
-            <input type="checkbox" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} /> Show completed
-          </label>
         </div>
 
-        {total === 0 && <p className="empty-note">No open todos. Nice and clear.</p>}
+        <div className="todo-shelves">
+          {SHELVES.map((s) => (
+            <button
+              key={s.key}
+              className={'shelf-btn' + (shelf === s.key ? ' active' : '')}
+              onClick={() => setShelf(s.key)}
+            >
+              {s.label}
+              {counts[s.key] > 0 && <span className="shelf-count">{counts[s.key]}</span>}
+            </button>
+          ))}
+        </div>
 
-        <Group title="⚠ Overdue" todos={overdueG} showDate />
-        <Group title="Today" todos={todayG} />
-        {upcoming.map((g) => (
-          <Group key={g.date} title={formatLong(g.date)} todos={g.todos} />
-        ))}
-        <Group title="Someday" todos={someday} />
-        <Group title="From older journals" todos={backlogG} showDate />
-        {showDone && <Group title="Completed" todos={done} showDate />}
+        {counts[shelf] === 0 && (
+          <p className="empty-note">
+            {shelf === 'logbook' ? 'Nothing completed yet.' : 'Nothing here. Nice and clear.'}
+          </p>
+        )}
+
+        {show('today') && <Group title="⚠ Overdue" todos={overdueG} showDate />}
+        {show('today') && <Group title="Today" todos={todayG} />}
+        {show('upcoming') &&
+          upcoming.map((g) => <Group key={g.date} title={formatLong(g.date)} todos={g.todos} />)}
+        {show('someday') && <Group title="Someday" todos={someday} />}
+        {show('someday') && <Group title="From older journals" todos={backlogG} showDate />}
+        {show('logbook') && <Group title="Completed" todos={done} showDate />}
       </div>
     </div>
   )

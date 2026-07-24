@@ -1179,6 +1179,64 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // step. Set `pendingCaret` before calling if you need to place the caret/selection.
   const replaceText = (id: number, text: string): void => patchById(id, { text }, undefined, `op:${++opSeq.current}`)
 
+  /** Toggle an inline markdown wrapper (bold/italic/strike/highlight/code/wikilink)
+   *  around the focused textarea's selection: unwrap when the markers are already there
+   *  (just outside or inside the selection), wrap otherwise. The selection is kept so
+   *  toolbar styles can stack (bold, then italic). Used by the toolbar and ⌘B/⌘I/⌘E. */
+  const applyInline = (open: string, close = open): void => {
+    if (editingId == null) return
+    const ta = taRefs.current.get(editingId)
+    const b = blocks.find((x) => x.id === editingId)
+    if (!ta || !b || b.type === 'code' || b.type === 'table') return
+    const val = ta.value
+    const start = ta.selectionStart
+    const end = ta.selectionEnd
+    const sel = val.slice(start, end)
+    if (start >= open.length && val.slice(start - open.length, start) === open && val.slice(end, end + close.length) === close) {
+      // Markers sit just outside the selection → remove them.
+      pendingCaret.current = { id: editingId, pos: start - open.length, end: end - open.length }
+      replaceText(editingId, val.slice(0, start - open.length) + sel + val.slice(end + close.length))
+    } else if (sel.length >= open.length + close.length && sel.startsWith(open) && sel.endsWith(close)) {
+      // The selection includes the markers → strip them.
+      const inner = sel.slice(open.length, sel.length - close.length)
+      pendingCaret.current = { id: editingId, pos: start, end: start + inner.length }
+      replaceText(editingId, val.slice(0, start) + inner + val.slice(end))
+    } else if (sel) {
+      pendingCaret.current = { id: editingId, pos: start + open.length, end: end + open.length }
+      replaceText(editingId, val.slice(0, start) + open + sel + close + val.slice(end))
+    } else {
+      // No selection: insert empty markers with the caret between them.
+      pendingCaret.current = { id: editingId, pos: start + open.length }
+      replaceText(editingId, val.slice(0, start) + open + close + val.slice(end))
+    }
+  }
+
+  /** Toolbar block-type toggles on the editing block: heading level, bullet, numbered, todo.
+   *  Re-applying the block's current kind reverts it to a plain paragraph. */
+  const setBlockKind = (kind: 1 | 2 | 3 | 'bullet' | 'ordered' | 'task'): void => {
+    if (editingId == null) return
+    const b = blocks.find((x) => x.id === editingId)
+    if (!b || b.type === 'code' || b.type === 'table') return
+    const caret: CaretPos = taRefs.current.get(editingId)?.selectionStart ?? 'end'
+    const toParagraph: Partial<Block> = { type: 'paragraph', level: 0, ordered: undefined, checked: undefined }
+    if (kind === 'bullet' || kind === 'ordered' || kind === 'task') {
+      const type = kind === 'ordered' ? 'bullet' : kind
+      const ordered = kind === 'ordered' ? true : undefined
+      const same = b.type === type && (type !== 'bullet' || !!b.ordered === !!ordered)
+      if (same) patchById(b.id, toParagraph, caret)
+      else
+        patchById(
+          b.id,
+          { type, level: isList(b) ? b.level : 0, ordered, checked: kind === 'task' ? false : undefined },
+          caret
+        )
+    } else if (b.type === 'heading' && b.level === kind) {
+      patchById(b.id, toParagraph, caret)
+    } else {
+      patchById(b.id, { type: 'heading', level: kind, ordered: undefined, checked: undefined }, caret)
+    }
+  }
+
   const insertAfter = (id: number, before: string, after: string): void => {
     const next = cloneBlocks(blocks)
     const idx = indexOfBlock(next, id)
@@ -1809,15 +1867,10 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       return
     }
 
-    // Bold / italic: wrap the selection (or insert empty markers).
-    if (mod && (e.key === 'b' || e.key === 'i')) {
+    // Inline formatting: ⌘B bold, ⌘I italic, ⌘E code — same toggle the toolbar uses.
+    if (mod && !e.shiftKey && (e.key === 'b' || e.key === 'i' || e.key === 'e')) {
       e.preventDefault()
-      const marker = e.key === 'b' ? '**' : '_'
-      const start = ta.selectionStart
-      const end = ta.selectionEnd
-      const sel = val.slice(start, end)
-      pendingCaret.current = { id: b.id, pos: sel ? end + marker.length * 2 : start + marker.length }
-      replaceText(b.id, val.slice(0, start) + marker + sel + marker + val.slice(end))
+      applyInline(e.key === 'b' ? '**' : e.key === 'i' ? '_' : '`')
       return
     }
 
@@ -2209,6 +2262,9 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     return { rows, crumbs, zoomIdx }
   }, [blocks, zoomId])
 
+  const editBlock = editingId != null ? (blocks.find((b) => b.id === editingId) ?? null) : null
+  const canFmt = editBlock !== null && editBlock.type !== 'code' && editBlock.type !== 'table'
+
   return (
     <div
       className="outliner"
@@ -2238,6 +2294,69 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         }
       }}
     >
+      {/* Word-style formatting bar. It writes the markdown for you on the focused block;
+          mousedown is swallowed so clicks never steal focus/selection from the textarea. */}
+      <div
+        className="fmt-bar"
+        title={canFmt ? undefined : 'Click into a line of text to enable formatting'}
+        onMouseDown={(e) => e.preventDefault()}
+      >
+        <button className="fmt-btn fmt-bold" title="Bold (⌘B)" disabled={!canFmt} onClick={() => applyInline('**')}>
+          B
+        </button>
+        <button className="fmt-btn fmt-italic" title="Italic (⌘I)" disabled={!canFmt} onClick={() => applyInline('_')}>
+          I
+        </button>
+        <button className="fmt-btn fmt-strike" title="Strikethrough" disabled={!canFmt} onClick={() => applyInline('~~')}>
+          S
+        </button>
+        <button className="fmt-btn fmt-hl" title="Highlight" disabled={!canFmt} onClick={() => applyInline('==')}>
+          A
+        </button>
+        <button className="fmt-btn fmt-mono" title="Inline code (⌘E)" disabled={!canFmt} onClick={() => applyInline('`')}>
+          {'</>'}
+        </button>
+        <button className="fmt-btn fmt-mono" title="Wikilink" disabled={!canFmt} onClick={() => applyInline('[[', ']]')}>
+          {'[[ ]]'}
+        </button>
+        <span className="fmt-sep" />
+        {([1, 2, 3] as const).map((n) => (
+          <button
+            key={n}
+            className={'fmt-btn' + (editBlock?.type === 'heading' && editBlock.level === n ? ' on' : '')}
+            title={`Heading ${n}`}
+            disabled={!canFmt}
+            onClick={() => setBlockKind(n)}
+          >
+            H{n}
+          </button>
+        ))}
+        <span className="fmt-sep" />
+        <button
+          className={'fmt-btn' + (editBlock?.type === 'bullet' && !editBlock.ordered ? ' on' : '')}
+          title="Bulleted list"
+          disabled={!canFmt}
+          onClick={() => setBlockKind('bullet')}
+        >
+          •
+        </button>
+        <button
+          className={'fmt-btn' + (editBlock?.type === 'bullet' && editBlock.ordered ? ' on' : '')}
+          title="Numbered list"
+          disabled={!canFmt}
+          onClick={() => setBlockKind('ordered')}
+        >
+          1.
+        </button>
+        <button
+          className={'fmt-btn' + (editBlock?.type === 'task' ? ' on' : '')}
+          title="To-do (⌘↩)"
+          disabled={!canFmt}
+          onClick={() => setBlockKind('task')}
+        >
+          ☐
+        </button>
+      </div>
       {find && (
         <div className="find-bar" style={barStyle} onKeyDown={onFindKeyDown}>
           <input

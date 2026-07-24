@@ -93,7 +93,8 @@ Key invariants and patterns:
   steps) plus any number of right-hand splits (`sidePanes: SidePane[]` — cmd-clicked notes /
   open PDFs; `closeSidePane(i?)` closes one). `view` switches the main pane between the
   editor and the graph/bases/journal/todos/assets/tags screens.
-- Appearance: `theme` (dark/light) + `accent` (see `ACCENTS`) live in localStorage;
+- Appearance: `theme` (`ThemeName`: dark / paper / light — paper is the warm dark variant,
+  `html[data-theme='paper']` in styles.css) + `accent` (see `ACCENTS`) live in localStorage;
   `customCss` mirrors the vault's `.verso/custom.css` and is injected/hot-reloaded by App.tsx.
 
 ### Editor — custom, NOT CodeMirror
@@ -101,7 +102,9 @@ Key invariants and patterns:
 The README mentions CodeMirror, but the editor is now a bespoke block outliner. (There is no
 `codemirror` dependency.)
 - **`components/BlockEditor.tsx`** — the outliner: `<textarea>`-per-block editing, indent/outdent,
-  folding, drag-reorder, block multi-select, word-level undo, `[[`-autocomplete, and a `/`
+  folding, drag-reorder, block multi-select, word-level undo, `[[`-autocomplete, a fixed
+  formatting toolbar (`.fmt-bar`, sticky at the top of each editor; `applyInline` toggles
+  inline markers — also ⌘B/⌘I/⌘E — and `setBlockKind` toggles heading/bullet/todo), and a `/`
   command menu (`SLASH_COMMANDS`: Insert template, headings, todo, bullet, table, query, base).
   Renders `{{query …}}`/`{{base …}}` blocks as embeds, `---` as `<hr>`, and a trailing
   click-to-write tail. `/template` (and the sidebar right-click "Apply template") merge a

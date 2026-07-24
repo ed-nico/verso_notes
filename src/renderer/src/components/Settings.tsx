@@ -16,7 +16,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const workspace = useStore((s) => s.workspace)
   const openWorkspace = useStore((s) => s.openWorkspace)
   const theme = useStore((s) => s.theme)
-  const toggleTheme = useStore((s) => s.toggleTheme)
+  const setTheme = useStore((s) => s.setTheme)
   const accent = useStore((s) => s.accent)
   const setAccent = useStore((s) => s.setAccent)
   const customCss = useStore((s) => s.customCss)
@@ -34,10 +34,6 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-
-  const setTheme = (t: 'light' | 'dark'): void => {
-    if (theme !== t) toggleTheme()
-  }
 
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
@@ -66,6 +62,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           <div className="seg">
             <button className={'seg-btn' + (theme === 'dark' ? ' active' : '')} onClick={() => setTheme('dark')}>
               ☾ Dark
+            </button>
+            <button className={'seg-btn' + (theme === 'paper' ? ' active' : '')} onClick={() => setTheme('paper')}>
+              ❧ Paper
             </button>
             <button className={'seg-btn' + (theme === 'light' ? ' active' : '')} onClick={() => setTheme('light')}>
               ☀ Light
