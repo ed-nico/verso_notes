@@ -1696,6 +1696,47 @@ del {
   white-space: pre;
   color: var(--text);
 }
+/* A ```mermaid fence rendered as a diagram. The row already wears the code-block
+   frame (`.bl-row.bl-code`), so this only centres the diagram inside it. */
+.bl-mermaid {
+  position: relative;
+  padding: 4px 0;
+  overflow-x: auto;
+}
+.bl-mermaid-svg {
+  display: flex;
+  justify-content: center;
+}
+.bl-mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+/* Holds the block's place while the mermaid bundle loads, so the note doesn't jump. */
+.bl-mermaid-pending {
+  min-height: 40px;
+}
+.bl-mermaid-src {
+  margin: 0;
+  overflow-x: auto;
+}
+.bl-mermaid-src code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text);
+}
+.bl-mermaid-msg {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  color: var(--danger);
+}
+
 .bl-code-input {
   font-family: var(--font-mono) !important;
   font-size: 13px !important;

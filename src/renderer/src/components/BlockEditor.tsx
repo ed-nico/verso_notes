@@ -26,6 +26,7 @@ import { dateSuggestions, formatLong } from '../lib/dates'
 import { QueryView } from './QueryView'
 import { BaseEmbed } from './BaseView'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
+import { MermaidBlock } from './MermaidBlock'
 import { TableEditor } from './TableEditor'
 import {
   type Block,
@@ -36,6 +37,7 @@ import {
   indexOfBlock,
   isList,
   makeBlock,
+  MERMAID_TEMPLATE,
   moveUnit,
   parseBlocks,
   parseTable,
@@ -67,6 +69,7 @@ const SLASH_COMMANDS: { cmd: string; label: string; icon: string }[] = [
   { cmd: 'bullet', label: 'Bullet list', icon: '•' },
   { cmd: 'numbered', label: 'Numbered list', icon: '1.' },
   { cmd: 'table', label: 'Table', icon: '▦' },
+  { cmd: 'mermaid', label: 'Mermaid diagram', icon: '◇' },
   { cmd: 'query', label: 'Query', icon: '{ }' },
   { cmd: 'base', label: 'Base (embed a saved view)', icon: '▦' }
 ]
@@ -1598,6 +1601,12 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     }
     setAc(null)
     if (cmd === 'table') return patchById(id, { type: 'table', text: TABLE_TEMPLATE }, 0)
+    if (cmd === 'mermaid')
+      return patchById(
+        id,
+        { type: 'code', lang: 'mermaid', text: MERMAID_TEMPLATE },
+        MERMAID_TEMPLATE.length
+      )
     if (cmd === 'query') return patchById(id, { text: '{{query }}' }, 8)
     if (cmd === 'base') return patchById(id, { text: '{{base }}' }, 7)
     if (cmd === 'todo') return patchById(id, { type: 'task', checked: false, text: '' }, 0)
@@ -1983,6 +1992,8 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       if (video) return <VideoEmbed video={video} onAddTimestamp={(k, s) => addVideoTimestamp(b.id, k, s)} />
     }
     if (b.type === 'code') {
+      // ```mermaid renders as a diagram; click it to edit the source, as with any block.
+      if (b.lang?.toLowerCase() === 'mermaid') return <MermaidBlock text={b.text} />
       return <CodeBlock text={b.text} lang={b.lang} />
     }
     if (b.type === 'table') {

@@ -38,6 +38,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "^3.0.0",
     "highlight.js": "^11.11.1",
+    "mermaid": "^11.16.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
