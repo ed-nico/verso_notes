@@ -17,6 +17,17 @@ Welcome to Verso. Here's how the pieces fit together.
   to open it in a new tab.
 - Paste or drop an image straight into a note — it's saved under `assets/` and shown inline.
 
+## Diagrams
+
+Tag a code fence `mermaid` and it renders as a diagram — click it to edit the source, or
+start a new one with `/mermaid`.
+
+```mermaid
+flowchart LR
+    NOTE[a note] -->|wikilink| OTHER[another note]
+    OTHER -->|backlink| NOTE
+```
+
 ## Todos
 
 Write a checkbox anywhere: 

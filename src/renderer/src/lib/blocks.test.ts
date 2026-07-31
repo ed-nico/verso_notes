@@ -226,6 +226,15 @@ describe('code fence round trip (2026-07 audit)', () => {
     const text = '~~~py\nprint("hi")\n~~~\n'
     expect(roundTrip(text)).toBe(text)
   })
+
+  // The renderer picks the diagram view off `lang`, so the tag has to survive a round trip.
+  it('keeps the mermaid tag on a diagram fence', () => {
+    const text = '```mermaid\nflowchart LR\n  A --> B\n```\n'
+    const { blocks } = parseBlocks(text)
+    expect(blocks[0].type).toBe('code')
+    expect(blocks[0].lang).toBe('mermaid')
+    expect(roundTrip(text)).toBe(text)
+  })
 })
 
 describe('parseBlocks frontmatter detection (2026-07 audit)', () => {

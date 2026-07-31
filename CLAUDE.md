@@ -113,6 +113,12 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
 - **`lib/blocks.ts`** — block model: parse/serialize markdown ↔ `Block[]`, indentation,
   shortcut detection, visible/foldable logic. The editor's data layer. Round-trips preserve
   `^block-anchor` markers (`Block.anchor`) and ordered-list numbering (`Block.ordinal`).
+- **`components/MermaidBlock.tsx`** + **`lib/mermaid.ts`** — a ```` ```mermaid ```` fence
+  renders as a diagram instead of code (dispatched from `renderRich`'s `code` branch on
+  `Block.lang`). `renderMermaid` is the ONE seam to the engine: it lazy-imports `mermaid`,
+  maps the app's CSS variables onto mermaid's `base` theme, and returns an SVG string — swap
+  the renderer there and nothing else moves. Parse errors surface as the source plus the
+  message; the row's own `.bl-code` frame supplies the chrome, so the block adds none.
 - **`components/InlineMarkdown.tsx`** (`renderInline`) — renders inline markdown (bold,
   links, tags) for non-focused blocks, backlinks, todos, and previews. Pass `noPreview` to
   suppress the ⌘-hover link preview (used inside the preview popup to avoid recursion).
