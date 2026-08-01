@@ -242,14 +242,17 @@ html[data-theme='light'] {
    below. Pairs well with the Serif editor font. */
 html[data-theme='paper'] {
   color-scheme: light;
-  --bg: #f5f1e8;
-  --bg-panel: #efe9dc;
-  --bg-elevated: #fdfbf6;
-  --bg-hover: #e7e0d0;
-  --border: #e0d7c5;
-  --text: #2e2a24;
-  --text-dim: #6a6255;
-  --text-faint: #9c9384;
+  /* Aged manila, not bright cream: a deeper, warmer stock that carries more of
+     the old warm-dark Paper's tone while staying a light theme. --bg-elevated
+     still sits ABOVE --bg so cards and code frames lift off the page. */
+  --bg: #ece4d3;
+  --bg-panel: #e4dbc6;
+  --bg-elevated: #f4eee0;
+  --bg-hover: #ded3ba;
+  --border: #d2c6ac;
+  --text: #2b2721;
+  --text-dim: #635b4c;
+  --text-faint: #918876;
   /* No --accent/--accent-dim/--link here: App.tsx always writes those three inline
      from the chosen ACCENT, so anything set here is dead. Pick Amber in Settings
      for a fully warm page. */
