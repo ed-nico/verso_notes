@@ -27,7 +27,9 @@ jobs:
       # --publish never: in CI-with-tag electron-builder defaults to publishing
       # itself (and wants GH_TOKEN); the gh-release step below does the upload.
       - run: npx electron-builder --mac --linux --win --publish never
-      - uses: softprops/action-gh-release@v2
+      # v3 is a pure runtime bump (node20 → node24, no input changes); v2 still
+      # declares node20, which GitHub has deprecated and force-runs on node24.
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/*.dmg
