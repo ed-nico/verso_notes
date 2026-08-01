@@ -250,9 +250,9 @@ html[data-theme='paper'] {
   --text: #2e2a24;
   --text-dim: #6a6255;
   --text-faint: #9c9384;
-  --accent: #9a5a2b;
-  --accent-dim: #b07a4e;
-  --link: #8a4f24;
+  /* No --accent/--accent-dim/--link here: App.tsx always writes those three inline
+     from the chosen ACCENT, so anything set here is dead. Pick Amber in Settings
+     for a fully warm page. */
   --heading: #a24a18;
   --tag: #2f7d5c;
   --danger: #b93a30;
