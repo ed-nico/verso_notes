@@ -118,15 +118,26 @@ export function TagsView(): React.JSX.Element {
   const createSupertag = useStore((s) => s.createSupertag)
   const [creating, setCreating] = useState(false)
 
+  const stIndex = useMemo(() => buildSupertagIndex(supertagsFromParsed(parsed)), [parsed])
+
   const tags = useMemo(() => {
     const counts = new Map<string, number>()
     for (const n of Object.values(parsed)) {
       for (const t of n.tags) counts.set(t, (counts.get(t) ?? 0) + 1)
     }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-  }, [parsed])
-
-  const stIndex = useMemo(() => buildSupertagIndex(supertagsFromParsed(parsed)), [parsed])
+    // A supertag exists because its note under Tags/ says so, NOT because a note
+    // carries it — the definition note doesn't tag itself. Without this a freshly
+    // created supertag is invisible here until something is tagged with it, which
+    // is exactly when you most need to find it (to give it a schema).
+    const seen = new Set([...counts.keys()].map(normTag))
+    for (const tag of stIndex.keys()) if (!seen.has(tag)) counts.set(tag, 0)
+    // Supertags first, then by use, then alphabetically — an unused supertag would
+    // otherwise sink below every casual #tag.
+    const rank = (t: string): number => (stIndex.has(normTag(t)) ? 0 : 1)
+    return [...counts.entries()].sort(
+      (a, b) => rank(a[0]) - rank(b[0]) || b[1] - a[1] || a[0].localeCompare(b[0])
+    )
+  }, [parsed, stIndex])
   const isSupertag = (tag: string): boolean => stIndex.has(normTag(tag))
   const activeSupertag = activeTag ? stIndex.get(normTag(activeTag)) : undefined
 
@@ -171,7 +182,11 @@ export function TagsView(): React.JSX.Element {
               placeholder="supertag name"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
-                  void createSupertag(e.currentTarget.value)
+                  // Stay on this page and select the new tag, so its schema editor is
+                  // right there. Opening the definition note instead (the default)
+                  // landed you on a blank page with no way to add a field.
+                  const name = e.currentTarget.value
+                  void createSupertag(name, { open: false }).then(() => openTag(normTag(name)))
                   setCreating(false)
                 } else if (e.key === 'Escape') setCreating(false)
               }}

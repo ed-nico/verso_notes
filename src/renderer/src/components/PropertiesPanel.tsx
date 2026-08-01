@@ -10,6 +10,7 @@ import { renderInline } from './InlineMarkdown'
 import {
   buildSupertagIndex,
   fieldsForNote,
+  isSupertagSchemaKey,
   normTag,
   supertagsFromParsed,
   type FieldType
@@ -469,9 +470,15 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
   const fields = fieldsForNote(tags, stIndex)
   const fieldNames = new Set(fields.map((f) => f.name))
 
-  // `pinned`/`tags`/supertag fields are surfaced in their own UI, not as generic property rows.
+  // `pinned`/`tags`/supertag fields — and a supertag definition's own `fields:`/
+  // `extends:` schema — are surfaced in their own UI, not as generic property rows.
   const userKeys = Object.keys(data).filter(
-    (k) => !isSystemProp(k) && k !== 'pinned' && k !== 'tags' && !fieldNames.has(k)
+    (k) =>
+      !isSystemProp(k) &&
+      k !== 'pinned' &&
+      k !== 'tags' &&
+      !fieldNames.has(k) &&
+      !isSupertagSchemaKey(path, k)
   )
   const cover = useMemo(() => Object.keys(data).map((k) => imageValue(data[k])).find(Boolean) ?? null, [data])
 

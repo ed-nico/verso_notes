@@ -3,6 +3,8 @@ import {
   buildSupertagIndex,
   fieldsForNote,
   fieldsToFrontmatter,
+  isSupertagDef,
+  isSupertagSchemaKey,
   resolveFields,
   supertagsForNote,
   supertagsFromParsed
@@ -83,5 +85,35 @@ describe('fieldsToFrontmatter', () => {
         { name: 'status', type: 'select', options: ['a', 'b'] }
       ])
     ).toEqual({ role: 'text', status: { type: 'select', options: ['a', 'b'] } })
+  })
+})
+
+describe('supertag definition notes', () => {
+  it('recognises a definition note by folder', () => {
+    expect(isSupertagDef('Tags/Person.md')).toBe(true)
+    expect(isSupertagDef('Notes/Person.md')).toBe(false)
+    // Not a Tags/ note despite the prefix.
+    expect(isSupertagDef('Tagsmith/Person.md')).toBe(false)
+  })
+
+  // `fields` is a nested map: shown as a generic property row it renders as
+  // "[object Object]", which is what users saw on a newly created supertag.
+  it('hides schema keys from the properties panel, only on definition notes', () => {
+    expect(isSupertagSchemaKey('Tags/Person.md', 'fields')).toBe(true)
+    expect(isSupertagSchemaKey('Tags/Person.md', 'extends')).toBe(true)
+    expect(isSupertagSchemaKey('Tags/Person.md', 'email')).toBe(false)
+    // An ordinary note may legitimately have a property called "fields".
+    expect(isSupertagSchemaKey('Notes/Survey.md', 'fields')).toBe(false)
+  })
+
+  it('defines a supertag with no instances and no declared fields', () => {
+    // What createSupertag writes. It must still register as a supertag, or it
+    // can never be found to give it a schema.
+    const st = supertagsFromParsed({
+      'Tags/Person.md': parseNote('Tags/Person.md', '---\nfields: {}\n---\n')
+    })
+    expect(st).toHaveLength(1)
+    expect(st[0].tag).toBe('person')
+    expect(st[0].fields).toEqual([])
   })
 })
