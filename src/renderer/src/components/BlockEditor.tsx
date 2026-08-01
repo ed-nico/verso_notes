@@ -1299,10 +1299,19 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         .slice(0, 8)
         .map((t) => ({ key: `tag:${t}`, label: t, icon: '#', tag: t }))
       const rows = [...stHits, ...tagHits].slice(0, 9)
-      // Offer to mint a supertag for the typed name (also upgrades a plain tag).
+      // Offer to mint a definition note for the typed name. The row does two jobs —
+      // create a brand-new tag, or give an existing plain tag its first schema — so
+      // label it for whichever it actually is ("New tag" on a tag you already use
+      // reads as a mistake).
       const name = state.query.trim()
       if (name && !supertagIndex.has(normTag(name))) {
-        rows.push({ key: '__new_st__', label: `New tag “${name}”`, icon: '＋', createTag: name })
+        const known = [...plain].some((t) => normTag(t) === normTag(name))
+        rows.push({
+          key: '__new_st__',
+          label: known ? `Add a schema to “${name}”` : `New tag “${name}”`,
+          icon: '＋',
+          createTag: name
+        })
       }
       return rows
     }
