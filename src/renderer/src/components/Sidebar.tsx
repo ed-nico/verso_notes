@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useDeferredValue, useMemo, useRef, useState } from 'react'
 import { useStore, templatesFromFiles } from '../store'
 import { dirname } from '../lib/links'
 import { searchNotes } from '../lib/search'
@@ -83,6 +83,9 @@ export function Sidebar(): React.JSX.Element {
   const structSig = useStore((s) => structSigOf(s.files, s.parsed))
   const activePath = useStore((s) => s.activePath)
   const view = useStore((s) => s.view)
+  const vaultLoading = useStore((s) => s.vaultLoading)
+  const loadedCount = useStore((s) => s.loadedCount)
+  const totalCount = useStore((s) => s.totalCount)
   const openNote = useStore((s) => s.openNote)
   const openNoteWithFind = useStore((s) => s.openNoteWithFind)
   const openInSidePane = useStore((s) => s.openInSidePane)
@@ -115,6 +118,11 @@ export function Sidebar(): React.JSX.Element {
   const createSupertagFromFolder = useStore((s) => s.createSupertagFromFolder)
 
   const [query, setQuery] = useState('')
+  // Full-text search touches every note; running it synchronously on each
+  // keystroke made the input itself lag on a big vault. Deferring lets the typed
+  // character paint immediately and re-runs the search at lower priority (React
+  // also drops superseded passes, so a fast typist pays for the last one only).
+  const deferredQuery = useDeferredValue(query)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [applyMenu, setApplyMenu] = useState<MenuState | null>(null)
   const [folderMenu, setFolderMenu] = useState<MenuState | null>(null)
@@ -139,15 +147,15 @@ export function Sidebar(): React.JSX.Element {
 
   const results = useMemo(
     () =>
-      query.trim()
-        ? searchNotes(query, files, useStore.getState().texts, 60, {
+      deferredQuery.trim()
+        ? searchNotes(deferredQuery, files, useStore.getState().texts, 60, {
             fuzzyNames: false,
             aliasOf: (p) => useStore.getState().parsed[p]?.aliases ?? [],
             parsed: useStore.getState().parsed
           })
         : null,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [query, files, structSig]
+    [deferredQuery, files, structSig]
   )
 
   const pinned = useMemo(() => {
@@ -379,6 +387,19 @@ export function Sidebar(): React.JSX.Element {
           ⌘K
         </button>
       </div>
+      {/* Vault-wide results (search, backlinks, graph, queries) are incomplete until
+          hydration finishes — say so rather than quietly returning too few hits. */}
+      {vaultLoading && (
+        <div className="vault-progress" role="status" title="Reading the vault in the background">
+          <span className="vault-progress-bar">
+            <span
+              className="vault-progress-fill"
+              style={{ width: `${totalCount ? Math.round((loadedCount / totalCount) * 100) : 0}%` }}
+            />
+          </span>
+          Indexing {loadedCount.toLocaleString()} / {totalCount.toLocaleString()}
+        </div>
+      )}
       <div className="sidebar-actions">
         <button
           className="icon-btn new-note"
@@ -547,7 +568,7 @@ export function Sidebar(): React.JSX.Element {
                 key={hit.path}
                 className={'search-hit' + (hit.path === activePath && view === 'editor' ? ' active' : '')}
                 onClick={(e) =>
-                  e.metaKey || e.ctrlKey ? openInSidePane(hit.path) : openNoteWithFind(hit.path, query.trim())
+                  e.metaKey || e.ctrlKey ? openInSidePane(hit.path) : openNoteWithFind(hit.path, deferredQuery.trim())
                 }
                 role="link"
                 tabIndex={0}
@@ -555,7 +576,7 @@ export function Sidebar(): React.JSX.Element {
                   if (e.key === 'Enter') {
                     e.preventDefault()
                     if (e.metaKey || e.ctrlKey) openInSidePane(hit.path)
-                    else openNoteWithFind(hit.path, query.trim())
+                    else openNoteWithFind(hit.path, deferredQuery.trim())
                   }
                 }}
                 title={hit.path}

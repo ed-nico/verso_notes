@@ -41,6 +41,40 @@ export function fuzzyScore(query: string, target: string): number {
   return score + Math.max(0, 10 - t.length / 4)
 }
 
+/**
+ * Per-note cache of the searchable body and its lowercased form, keyed by text
+ * identity (same pattern as query.ts's scanCache and similar.ts's docCache).
+ *
+ * Without it, every keystroke re-sliced the frontmatter off every note AND
+ * allocated a full lowercase copy of every body — on a few thousand notes that
+ * is tens of megabytes of transient garbage per character typed.
+ */
+interface BodyDoc {
+  text: string
+  body: string
+  lower: string
+}
+const bodyCache = new Map<string, BodyDoc>()
+
+/** Empty the cache — call when switching vaults so notes can't leak across. */
+export function clearSearchCache(): void {
+  bodyCache.clear()
+}
+
+/** Drop one note from the cache (on delete/rename). */
+export function dropFromSearchCache(path: string): void {
+  bodyCache.delete(path)
+}
+
+function bodyOf(path: string, text: string, fast: boolean): BodyDoc {
+  const hit = bodyCache.get(path)
+  if (hit && hit.text === text) return hit
+  const body = fast ? stripFrontmatterFast(text) : stripFrontmatter(text)
+  const doc: BodyDoc = { text, body, lower: body.toLowerCase() }
+  bodyCache.set(path, doc)
+  return doc
+}
+
 /** Build a ~120-char snippet centred on `at`, with surrounding whitespace collapsed. */
 function snippetAround(body: string, at: number, len: number): string {
   const radius = 50
@@ -89,12 +123,9 @@ export function searchNotes(
     const nameHay = names.join('\n').toLowerCase()
     // With parsed data available there's nothing left to learn from the YAML —
     // slice the body off with a plain fence scan. Fall back to the full parse.
-    const body = needBody
-      ? p
-        ? stripFrontmatterFast(texts[f.path] ?? '')
-        : stripFrontmatter(texts[f.path] ?? '')
-      : ''
-    const bodyLower = body.toLowerCase()
+    const doc = needBody ? bodyOf(f.path, texts[f.path] ?? '', !!p) : null
+    const body = doc?.body ?? ''
+    const bodyLower = doc?.lower ?? ''
 
     // (1) Quick-switcher fuzzy path: the whole query as a subsequence of a name/alias.
     // Fuzzy is great for the switcher but far too loose for a search box (`fuzzyNames`

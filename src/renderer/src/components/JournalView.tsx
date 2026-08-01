@@ -2,9 +2,8 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { BlockEditor } from './BlockEditor'
 import { TodoItem } from './TodoItem'
-import { addDays, dailyDateOf, dailyPath, formatLong, todayISO } from '../lib/dates'
+import { addDays, dailyPath, formatLong, todayISO } from '../lib/dates'
 import { aggregateTodos, dueOn, overdue, type Todo } from '../lib/todos'
-import { hoverLink, unhoverLink } from './LinkPreview'
 
 const BATCH = 7
 
@@ -85,30 +84,21 @@ const JournalDay = memo(
 export function JournalView(): React.JSX.Element {
   const today = todayISO()
   const [count, setCount] = useState(10)
-  const [showOtd, setShowOtd] = useState(false)
   // `index`, not `texts`, is the recompute signal: the texts map is mutated in
   // place while typing (same identity — a [texts] memo goes stale), and the index
   // identity changes exactly once per debounced rebuild. aggregateTodos is
   // per-note cached, so each refresh costs O(changed notes), not O(vault).
   const index = useStore((s) => s.index)
-  const files = useStore((s) => s.files)
-  const parsed = useStore((s) => s.parsed)
-  const openNote = useStore((s) => s.openNote)
 
   const days = useMemo(() => Array.from({ length: count }, (_, i) => addDays(today, -i)), [today, count])
   const todos = useMemo(() => {
     const texts = useStore.getState().texts
     return aggregateTodos(Object.entries(texts).map(([path, text]) => ({ path, text })))
+    // `index` is the intended trigger, not an unused dep: `texts` is mutated in
+    // place while typing, so a new index identity is the signal that the debounced
+    // rebuild has landed and the todo aggregate is worth recomputing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index])
-
-  // All daily notes sharing today's month + day (any year, including this one).
-  const onThisDay = useMemo(() => {
-    const mmdd = today.slice(5)
-    return files
-      .map((f) => ({ path: f.path, iso: dailyDateOf(f.path) }))
-      .filter((x): x is { path: string; iso: string } => !!x.iso && x.iso.slice(5) === mmdd)
-      .sort((a, b) => (a.iso < b.iso ? 1 : -1))
-  }, [files, today])
 
   const onScroll = (e: React.UIEvent<HTMLDivElement>): void => {
     const el = e.currentTarget
@@ -120,45 +110,6 @@ export function JournalView(): React.JSX.Element {
   return (
     <div className="scroll-area journal" onScroll={onScroll}>
       <div className="doc journal-doc">
-        <div className="journal-header">
-          <button
-            className={'icon-btn' + (showOtd ? ' active' : '')}
-            onClick={() => setShowOtd((v) => !v)}
-            title="Entries from this day in other years"
-          >
-            ↻ On This Day{onThisDay.length ? ` · ${onThisDay.length}` : ''}
-          </button>
-        </div>
-
-        {showOtd && (
-          <div className="otd-panel">
-            {onThisDay.length === 0 ? (
-              <p className="empty-note">No journal entries on this day yet.</p>
-            ) : (
-              onThisDay.map(({ path, iso }) => (
-                <div
-                  className="otd-item"
-                  key={path}
-                  role="link"
-                  tabIndex={0}
-                  onClick={() => openNote(path)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      openNote(path)
-                    }
-                  }}
-                  onMouseEnter={(e) => hoverLink(path.replace(/\.md$/i, ''), e.clientX, e.clientY)}
-                  onMouseLeave={() => unhoverLink()}
-                >
-                  <span className="otd-date">{formatLong(iso)}</span>
-                  <span className="otd-excerpt">{parsed[path]?.excerpt || '—'}</span>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
         {days.map((iso) => (
           <JournalDay
             key={iso}

@@ -165,7 +165,6 @@ export function LinkPreview(): React.JSX.Element | null {
   }, [])
 
   const files = useStore((s) => s.files)
-  const texts = useStore((s) => s.texts)
   const parsed = useStore((s) => s.parsed)
   const index = useStore((s) => s.index)
   const navigate = useStore((s) => s.navigate)
@@ -209,7 +208,9 @@ export function LinkPreview(): React.JSX.Element | null {
       onMouseLeave={scheduleHide}
     >
       <div className="hp-title">{note?.name ?? path.replace(/\.md$/i, '')}</div>
-      <div className="hp-full">{renderNote(texts[path] ?? '', opts)}</div>
+      {/* `texts` is mutated in place, so a subscription to the map would never
+          fire; the popup mounts fresh on each hover, which is when it matters. */}
+      <div className="hp-full">{renderNote(useStore.getState().texts[path] ?? '', opts)}</div>
       {tags.length > 0 && (
         <div className="hp-meta">
           {tags.map((t) => (

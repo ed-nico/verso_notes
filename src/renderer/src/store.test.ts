@@ -35,13 +35,30 @@ const verso = {
       mtime: 1
     })
   ),
-  readNote: vi.fn(async () => null),
+  readNote: vi.fn(async (path: string) => (diskVault[path] === undefined ? null : { path, text: diskVault[path] })),
+  readNotes: vi.fn(async (paths: string[]) => {
+    readNotesCalls.push(paths.length)
+    return paths.filter((p) => diskVault[p] !== undefined).map((p) => ({ path: p, text: diskVault[p] }))
+  }),
+  loadWorkspace: vi.fn(async (root: string) => ({
+    root,
+    files: Object.keys(diskVault).map((path) => ({
+      path,
+      name: path.replace(/\.md$/i, '').split('/').pop() ?? path,
+      mtime: 1
+    }))
+  })),
   readCanvas: vi.fn(async (_path: string): Promise<unknown> => ({ nodes: [], edges: [] })),
   writeCanvas: vi.fn(async (_path: string, _data: unknown): Promise<WriteResult> => ({ ok: true })),
   readCustomCss: vi.fn(async () => null),
   readBases: vi.fn(async () => null),
   listCanvases: vi.fn(async () => [])
 }
+
+/** What the fake main process has on disk, for the streaming loader tests. */
+let diskVault: Record<string, string> = {}
+/** Batch sizes passed to readNotes, to prove hydration really is chunked. */
+const readNotesCalls: number[] = []
 
 const storage = new Map<string, string>()
 vi.stubGlobal('localStorage', {
@@ -86,6 +103,8 @@ function seed(texts: Record<string, string>): void {
 }
 
 beforeEach(() => {
+  diskVault = {}
+  readNotesCalls.length = 0
   writeLog.length = 0
   inFlight = 0
   maxInFlight = 0
@@ -205,5 +224,89 @@ describe('history', () => {
     expect(s.history.length).toBeGreaterThanOrEqual(2)
     st.goBack()
     expect(useStore.getState().activeCanvasPath).toBe('One.canvas')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Streaming vault hydration: the UI must be usable before the whole vault is read.
+// ---------------------------------------------------------------------------
+
+describe('streaming vault hydration', () => {
+  /** Put `n` notes on the fake disk and point the store at that workspace. */
+  const seedDisk = (n: number): string[] => {
+    const paths: string[] = []
+    for (let i = 0; i < n; i++) {
+      const p = `n${String(i).padStart(4, '0')}.md`
+      diskVault[p] = `note ${i} links [[n${String((i + 1) % n).padStart(4, '0')}]]`
+      paths.push(p)
+    }
+    useStore.setState({ workspace: { root: '/vault', files: [] } })
+    return paths
+  }
+
+  it('hydrates every note and lands with the vault complete', async () => {
+    const paths = seedDisk(50)
+    await useStore.getState().reloadVault()
+    const st = useStore.getState()
+    expect(Object.keys(st.texts).sort()).toEqual([...paths].sort())
+    expect(Object.keys(st.parsed)).toHaveLength(50)
+    expect(st.vaultLoading).toBe(false)
+    expect(st.loadedCount).toBe(50)
+    expect(st.totalCount).toBe(50)
+  })
+
+  it('reads the note being shown on its own, ahead of the batches', async () => {
+    seedDisk(30)
+    await useStore.getState().reloadVault()
+    // The active note comes from a single readNote; the rest arrive via readNotes,
+    // which must therefore never be asked for it.
+    const active = useStore.getState().activePath!
+    const asked = verso.readNotes.mock.calls.flatMap((c: unknown[]) => c[0] as string[])
+    expect(asked).not.toContain(active)
+    expect(asked).toHaveLength(29)
+  })
+
+  it('requests notes in bounded batches rather than one giant read', async () => {
+    seedDisk(1000)
+    await useStore.getState().reloadVault()
+    expect(readNotesCalls.length).toBeGreaterThan(1)
+    expect(Math.max(...readNotesCalls)).toBeLessThanOrEqual(400)
+    expect(readNotesCalls.reduce((a, b) => a + b, 0)).toBe(999)
+  })
+
+  it('builds a complete link index once hydration finishes', async () => {
+    seedDisk(20)
+    await useStore.getState().reloadVault()
+    // Every note links to the next, so every note has exactly one backlink.
+    const idx = useStore.getState().index
+    expect(idx.backlinkCount('n0005.md')).toBe(1)
+    expect(idx.backlinkCount('n0000.md')).toBe(1)
+  })
+
+  it('never clobbers a note edited while the rest of the vault streams in', async () => {
+    seedDisk(600)
+    // Edit from INSIDE the first batch, so the write genuinely races hydration:
+    // n0500 lives in the second batch and has not been read yet at this point.
+    let edited = false
+    verso.readNotes.mockImplementation(async (paths: string[]) => {
+      if (!edited) {
+        edited = true
+        useStore.getState().editNote('n0500.md', 'typed while loading')
+      }
+      return paths.filter((p) => diskVault[p] !== undefined).map((p) => ({ path: p, text: diskVault[p] }))
+    })
+    await useStore.getState().reloadVault()
+    expect(edited).toBe(true)
+    expect(useStore.getState().texts['n0500.md']).toBe('typed while loading')
+  })
+
+  it('reports progress that ends at the total', async () => {
+    seedDisk(120)
+    const seen: number[] = []
+    const unsub = useStore.subscribe((s) => seen.push(s.loadedCount))
+    await useStore.getState().reloadVault()
+    unsub()
+    expect(seen.some((n) => n > 0 && n < 120)).toBe(true) // partial progress was published
+    expect(useStore.getState().loadedCount).toBe(120)
   })
 })

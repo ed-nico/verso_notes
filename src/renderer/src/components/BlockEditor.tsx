@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useLayoutEffect, useMemo, useReducer } from 'react'
+import { useRef, useState, useEffect, useMemo, useReducer } from 'react'
 import { useStore, templatesFromFiles } from '../store'
 import { basename, dirname, resolveTarget, stripMd } from '../lib/links'
 import { applyTemplate } from '../lib/templates'
@@ -6,11 +6,15 @@ import { fileToBase64 } from '../lib/assets'
 import { noteBus } from '../lib/notebus'
 import { blockClip } from '../lib/blockclip'
 import { parseFrontmatter } from '../lib/frontmatter'
+import { escapeRegExp } from '../lib/md'
 import { subscribeSpell, resetSpell } from '../lib/spell'
 import { parseVideoUrl, formatTimestamp, videoKey } from '../lib/video'
 import { activePlayerKey, currentTime } from '../lib/videobus'
 import { renderInline } from './InlineMarkdown'
 import { BlockRow, type AcSuggestion, type FindMatch, type RowApi } from './BlockRow'
+import { useBlockDrag } from './useBlockDrag'
+import { useFindReplace } from './useFindReplace'
+import type { CaretPos, PendingCaret } from './caret'
 import { VideoEmbed } from './VideoEmbed'
 import { ContextMenu } from './ContextMenu'
 import { EntityCard } from './EntityCard'
@@ -44,7 +48,6 @@ import {
   visibleBlocks
 } from '../lib/blocks'
 
-type CaretPos = 'start' | 'end' | number
 /**
  * The popup under a block. `link` = `[[` wikilink picker; `slash-menu` = the `/`
  * command menu; `slash-template` = the template list shown after picking "Insert
@@ -74,9 +77,9 @@ const SLASH_COMMANDS: { cmd: string; label: string; icon: string }[] = [
 /** Typing one of these while text is selected wraps the selection instead of replacing it. */
 const WRAP_PAIRS: Record<string, string> = { '[': ']', '(': ')', '{': '}', '"': '"', "'": "'", '`': '`' }
 
-/** Escape a literal string for use inside a RegExp (for find & replace). */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** Order-sensitive equality for two short string lists (alias sets). */
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i])
 }
 
 /** A stable, pleasant background color for a tag's letter avatar (derived from its name). */
@@ -84,24 +87,6 @@ function tagAvatarColor(name: string): string {
   let h = 0
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360
   return `hsl(${h}, 42%, 46%)`
-}
-
-/** All case-insensitive occurrences of `q` across the blocks, in document order. */
-function findMatchesIn(blocks: Block[], q: string): FindMatch[] {
-  if (!q) return []
-  const out: FindMatch[] = []
-  const lq = q.toLowerCase()
-  blocks.forEach((b, index) => {
-    const lt = b.text.toLowerCase()
-    let from = 0
-    for (;;) {
-      const at = lt.indexOf(lq, from)
-      if (at < 0) break
-      out.push({ id: b.id, index, start: at, end: at + q.length })
-      from = at + q.length
-    }
-  })
-  return out
 }
 
 /**
@@ -134,6 +119,18 @@ function caretOffsetAt(root: HTMLElement, x: number, y: number): number | null {
  * layout-affecting styles, so its wrapping matches.
  */
 let caretMirror: HTMLDivElement | null = null
+/** The style signature the mirror is currently configured for, so we only re-copy
+ *  the ~20 computed properties when the textarea's geometry/typography actually
+ *  differs — otherwise every ArrowUp/Down paid for a getComputedStyle read plus
+ *  20 style writes (each invalidating layout) before measuring anything. */
+let caretMirrorSig = ''
+const CARET_MIRROR_PROPS = [
+  'boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+  'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
+  'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'tabSize'
+] as const
+
 function caretLine(ta: HTMLTextAreaElement): { atFirst: boolean; atLast: boolean } {
   const cs = window.getComputedStyle(ta)
   // One persistent hidden mirror, reused across calls — creating/appending/removing a
@@ -147,15 +144,19 @@ function caretLine(ta: HTMLTextAreaElement): { atFirst: boolean; atLast: boolean
     caretMirror.style.whiteSpace = 'pre-wrap'
     caretMirror.style.overflowWrap = 'break-word'
     document.body.appendChild(caretMirror)
+    caretMirrorSig = ''
   }
   const div = caretMirror
-  const props = [
-    'boxSizing', 'width', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-    'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-    'fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant',
-    'letterSpacing', 'lineHeight', 'textTransform', 'wordSpacing', 'tabSize'
-  ] as const
-  for (const p of props) div.style[p as never] = cs[p as never]
+  // Every row shares the editor's typography, so consecutive calls — even across
+  // different blocks — almost always hit this early-out.
+  // NUL separator: font-family and shorthand values contain spaces and commas,
+  // so only a character CSS can never emit keeps the signature unambiguous.
+  let sig = ''
+  for (const p of CARET_MIRROR_PROPS) sig += cs[p as never] + '\u0000'
+  if (sig !== caretMirrorSig) {
+    for (const p of CARET_MIRROR_PROPS) div.style[p as never] = cs[p as never]
+    caretMirrorSig = sig
+  }
   // The top of the line containing `index` = offsetTop of a span placed at that index.
   const topAt = (index: number): number => {
     div.textContent = ta.value.slice(0, index)
@@ -238,14 +239,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const [ac, setAc] = useState<AcState | null>(null)
   // Block-level multi-selection (whole bullets, not text within one).
   const [selIds, setSelIds] = useState<Set<number>>(() => new Set())
-  // In-note find & replace (⌘F), scoped to this editor's blocks. `idx` is the active match.
-  const [find, setFind] = useState<{ q: string; r: string; idx: number } | null>(null)
-  const [barStyle, setBarStyle] = useState<React.CSSProperties>({})
-  const findInputRef = useRef<HTMLInputElement>(null)
-  const wantFirstJump = useRef(false)
-  const findRequest = useStore((s) => s.findRequest)
-
-  const pendingCaret = useRef<{ id: number; pos: CaretPos; end?: CaretPos } | null>(null)
+  const pendingCaret = useRef<PendingCaret | null>(null)
   // Set by ⌘⇧V (paste-as-is): the next paste skips markdown→block parsing and inserts
   // the clipboard text verbatim into the current field.
   const plainPasteRef = useRef(false)
@@ -267,26 +261,27 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // Always-current blocks, for async callbacks (smart-title fetch) that outlive a render.
   const blocksRef = useRef(blocks)
   blocksRef.current = blocks
-  // Drag-reorder from the bullet handle (document listeners read these refs).
-  const blockDragRef = useRef<{
-    id: number
-    startX: number
-    startY: number
-    origLevel: number
-    active: boolean
-  } | null>(null)
-  const dropRef = useRef<{ beforeId: number | null; depth: number } | null>(null)
-  const justDraggedRef = useRef(false)
   const zoomIdRef = useRef<number | null>(null)
   zoomIdRef.current = zoomId
-  const [dropHint, setDropHint] = useState<{ top: number; left: number; width: number } | null>(null)
+  // Latest commit, for subscriptions created once per note (noteBus, drag-reorder) —
+  // a plain closure would go stale after the first structural change. Assigned just
+  // below `commit`'s definition; only ever *read* from inside a callback.
+  const commitRef = useRef<(next: Block[], coalesceKey?: string) => void>(() => {})
+  // Drag-reorder from the bullet handle — see useBlockDrag (it reads only refs, so
+  // its document listeners subscribe once rather than per keystroke).
+  const { onHandleMouseDown, dropHint, justDragged } = useBlockDrag({
+    blocksRef,
+    zoomIdRef,
+    outlinerRef,
+    commitRef
+  })
 
   const files = useStore((s) => s.files)
   const templates = useMemo(() => templatesFromFiles(files), [files])
-  const matches = useMemo(() => findMatchesIn(blocks, find?.q ?? ''), [blocks, find?.q])
   const navigate = useStore((s) => s.navigate)
   const openTag = useStore((s) => s.openTag)
   const parsed = useStore((s) => s.parsed)
+  const parsedChanges = useStore((s) => s.parsedChanges)
   const index = useStore((s) => s.index)
   const ensureEntity = useStore((s) => s.ensureEntity)
   const allPaths = useMemo(() => files.map((f) => f.path), [files])
@@ -333,7 +328,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const applySpellFix = (blockId: number, word: string, replacement: string): void => {
     const blk = blocks.find((b) => b.id === blockId)
     if (blk) {
-      const re = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`)
+      const re = new RegExp(`\\b${escapeRegExp(word)}\\b`)
       replaceText(blockId, blk.text.replace(re, replacement))
     }
     setSpellMenu(null)
@@ -387,9 +382,6 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     }
   }
 
-  // Latest commit, for subscriptions created once per note (noteBus) — a plain
-  // closure would go stale after the first structural change.
-  const commitRef = useRef<(next: Block[], coalesceKey?: string) => void>(() => {})
   // Every structural change snapshots the prior blocks for undo. Consecutive
   // edits sharing a `coalesceKey` (e.g. typing in one block) fold into one step.
   const commit = (next: Block[], coalesceKey?: string): void => {
@@ -450,53 +442,6 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     }
     pendingCaret.current = null
   })
-
-  // Pin the find bar to the top of the editor's scroll viewport (position: fixed, measured
-  // from the .scroll-area) so it never moves while cycling matches or scrolling the note.
-  useLayoutEffect(() => {
-    if (!find) return
-    const update = (): void => {
-      const sa = outlinerRef.current?.closest('.scroll-area') as HTMLElement | null
-      if (!sa) return
-      const r = sa.getBoundingClientRect()
-      const width = Math.min(560, r.width - 24)
-      setBarStyle({ position: 'fixed', top: Math.round(r.top + 10), left: Math.round(r.right - 12 - width), width })
-    }
-    update()
-    window.addEventListener('resize', update)
-    return () => window.removeEventListener('resize', update)
-  }, [find !== null])
-
-  // Sidebar search → open the in-note find for the searched term and jump to the first match.
-  useEffect(() => {
-    if (findRequest && findRequest.path === path) {
-      const q = findRequest.query
-      setFind({ q, r: '', idx: -1 })
-      wantFirstJump.current = findMatchesIn(blocks, q).length > 0
-      useStore.getState().clearFindRequest()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [findRequest, path])
-
-  // Once the requested query's matches are computed, jump to the first one (just once).
-  useEffect(() => {
-    if (wantFirstJump.current && find && matches.length) {
-      wantFirstJump.current = false
-      gotoMatch(0)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches, find])
-
-  // After Replace, advance to the requested match once the list has recomputed.
-  const wantMatchIdx = useRef<number | null>(null)
-  useEffect(() => {
-    if (wantMatchIdx.current === null) return
-    const target = wantMatchIdx.current
-    wantMatchIdx.current = null
-    if (matches.length) gotoMatch(target)
-    else setFind((f) => (f ? { ...f, idx: -1 } : f))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [matches])
 
   // Live insert from the PDF pane (highlights) into this note. Goes through
   // `commit` (via the ref, so it isn't stale) so the insert is a real undo step.
@@ -864,7 +809,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     if (mod && e.key === ';') return e.preventDefault(), insertTimestamp()
     if (mod && (e.key === 'f' || e.key === 'F')) return e.preventDefault(), openFind()
     if (mod && (e.key === 'g' || e.key === 'G'))
-      return e.preventDefault(), void (matches.length && gotoMatch((find?.idx ?? -1) + (e.shiftKey ? -1 : 1)))
+      return e.preventDefault(), stepMatch(e.shiftKey)
     if (mod && (e.key === 'z' || e.key === 'Z')) return e.preventDefault(), void (e.shiftKey ? redo() : undo())
     if (mod && e.key === 'y') return e.preventDefault(), redo()
     if (mod && e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))
@@ -919,155 +864,8 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       document.removeEventListener('mouseup', onUp)
     }
     // visibleIdsBetween reads blocksRef, so the handlers never go stale.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ---- drag-reorder (from the bullet/number handle; a plain click still zooms) ----
-  const onHandleMouseDown = (b: Block, e: React.MouseEvent): void => {
-    if (!isList(b) || e.button !== 0) return
-    e.preventDefault() // no text selection during the drag; click (zoom/toggle) still fires
-    blockDragRef.current = { id: b.id, startX: e.clientX, startY: e.clientY, origLevel: b.level, active: false }
-  }
-
-  // Document-level drag listeners (subscribed once; read refs, never render closures).
-  // The dragged subtree swaps position via a drop gap between VISIBLE rows; the drop
-  // depth is clamped to [below.level, above.level+1] (never deeper than one past the
-  // row above) with dotflowy-style nest resistance: gaining a level takes deliberate
-  // rightward travel (60px), shedding one stays easy (24px).
-  useEffect(() => {
-    const GAIN_PX = 24 / 0.4
-    const SHED_PX = 24
-    const clear = (): void => {
-      blockDragRef.current = null
-      dropRef.current = null
-      setDropHint(null)
-    }
-    const onMove = (e: MouseEvent): void => {
-      const d = blockDragRef.current
-      if (!d) return
-      if (!d.active) {
-        if (Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY) < 5) return
-        d.active = true
-      }
-      const src = blocksRef.current
-      const sIdx = indexOfBlock(src, d.id)
-      if (sIdx < 0) return clear()
-      const [, sEnd] = childrenRange(src, sIdx)
-      const rowEls = [...(outlinerRef.current?.querySelectorAll<HTMLElement>('[data-block-id]') ?? [])]
-      if (!rowEls.length) return
-      const idOf = (el: HTMLElement): number => Number(el.dataset.blockId)
-      const rawOf = (el: HTMLElement): number => indexOfBlock(src, idOf(el))
-      // The gap: insert before the first visible row whose midpoint is below the pointer.
-      let gapDom = rowEls.length
-      for (let i = 0; i < rowEls.length; i++) {
-        const r = rowEls[i].getBoundingClientRect()
-        if (e.clientY < r.top + r.height / 2) {
-          gapDom = i
-          break
-        }
-      }
-      const beforeEl = gapDom < rowEls.length ? rowEls[gapDom] : null
-      const beforeRaw = beforeEl ? rawOf(beforeEl) : src.length
-      // Gaps inside the dragged subtree aren't targets.
-      if (beforeRaw > sIdx && beforeRaw < sEnd) {
-        dropRef.current = null
-        setDropHint(null)
-        return
-      }
-      // When zoomed, nothing may drop above the zoom root (that leaves the view).
-      const zi = zoomIdRef.current != null ? indexOfBlock(src, zoomIdRef.current) : -1
-      if (zi >= 0 && beforeRaw <= zi) {
-        dropRef.current = null
-        setDropHint(null)
-        return
-      }
-      // The row above the gap; if that's the dragged subtree itself, use the row above it.
-      let ai = gapDom - 1
-      while (ai >= 0) {
-        const r = rawOf(rowEls[ai])
-        if (r >= sIdx && r < sEnd) ai--
-        else break
-      }
-      const aboveEl = ai >= 0 ? rowEls[ai] : null
-      const above = aboveEl ? src[rawOf(aboveEl)] : undefined
-      // The block below the gap once the subtree is lifted out (gap right above the
-      // dragged row → the block after its subtree; gap at the very end → none).
-      const below = beforeEl ? (beforeRaw === sIdx ? src[sEnd] : src[beforeRaw]) : undefined
-      const zFloor = zi >= 0 && isList(src[zi]) ? src[zi].level + 1 : 0
-      const maxD = above ? (isList(above) ? above.level + 1 : 0) : 0
-      const minD = Math.max(below && isList(below) ? below.level : 0, zFloor)
-      if (minD > maxD) {
-        dropRef.current = null
-        setDropHint(null)
-        return
-      }
-      const dx = e.clientX - d.startX
-      const desired = d.origLevel + (dx >= 0 ? Math.floor(dx / GAIN_PX) : -Math.floor(-dx / SHED_PX))
-      const depth = Math.min(maxD, Math.max(minD, desired))
-      dropRef.current = { beforeId: beforeEl ? idOf(beforeEl) : null, depth }
-      // Indicator geometry: the gap line, indented to the target depth. Rows may render
-      // rebased (zoom), so derive the visual offset from the anchor row's own padding.
-      const anchorEl = beforeEl ?? aboveEl ?? rowEls[0]
-      const anchorBlock = src[rawOf(anchorEl)]
-      const ar = anchorEl.getBoundingClientRect()
-      const pad = parseFloat(anchorEl.style.paddingLeft || '0')
-      const rebase = (isList(anchorBlock) ? anchorBlock.level : 0) - pad / 24
-      const left = ar.left - pad + Math.max(0, depth - rebase) * 24 + 38
-      const top = beforeEl ? ar.top : aboveEl ? aboveEl.getBoundingClientRect().bottom : ar.bottom
-      setDropHint({ top: top - 1, left, width: Math.max(60, ar.right - left) })
-    }
-    const finish = (apply: boolean): void => {
-      const d = blockDragRef.current
-      const t = dropRef.current
-      if (d?.active) {
-        justDraggedRef.current = true // swallow the click-to-zoom this drag would fire
-        window.setTimeout(() => (justDraggedRef.current = false), 250)
-      }
-      if (apply && d?.active && t) {
-        const src = blocksRef.current
-        const sIdx = indexOfBlock(src, d.id)
-        if (sIdx >= 0) {
-          const [, sEnd] = childrenRange(src, sIdx)
-          let at = t.beforeId != null ? indexOfBlock(src, t.beforeId) : src.length
-          const delta = t.depth - src[sIdx].level
-          const inSelf = at > sIdx && at < sEnd
-          const noop = delta === 0 && (at === sIdx || at === sEnd)
-          if (at >= 0 && !inSelf && !noop) {
-            const next = cloneBlocks(src)
-            const group = next
-              .splice(sIdx, sEnd - sIdx)
-              .map((b) => (isList(b) ? { ...b, level: b.level + delta } : b))
-            if (at > sIdx) at -= group.length
-            next.splice(at, 0, ...group)
-            // A collapsed new parent would swallow the drop invisibly — expand it.
-            for (let k = at - 1; k >= 0 && t.depth > 0; k--) {
-              const pb = next[k]
-              if (!isList(pb)) break
-              if (pb.level < t.depth) {
-                if (pb.collapsed) next[k] = { ...pb, collapsed: false }
-                break
-              }
-            }
-            commitRef.current(next)
-          }
-        }
-      }
-      clear()
-    }
-    const onUp = (): void => finish(true)
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && blockDragRef.current?.active) finish(false)
-    }
-    document.addEventListener('mousemove', onMove)
-    document.addEventListener('mouseup', onUp)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousemove', onMove)
-      document.removeEventListener('mouseup', onUp)
-      document.removeEventListener('keydown', onKey)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // Smart link title: after a bare URL is pasted into an otherwise-empty block, fetch the
   // page title and upgrade it to `[Title](url)`. Only acts if the block is still just the
@@ -1179,6 +977,32 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // step. Set `pendingCaret` before calling if you need to place the caret/selection.
   const replaceText = (id: number, text: string): void => patchById(id, { text }, undefined, `op:${++opSeq.current}`)
 
+  // In-note find & replace (⌘F). Declared here because it needs `commit` and
+  // `replaceText`; hook ORDER is what React cares about, not position in the body.
+  const {
+    find,
+    setFind,
+    matches,
+    activeMatch,
+    barStyle,
+    inputRef: findInputRef,
+    openFind,
+    closeFind,
+    stepMatch,
+    replaceCurrent,
+    replaceAll,
+    onFindKeyDown
+  } = useFindReplace({
+    path,
+    blocks,
+    setBlocks,
+    setEditingId,
+    pendingCaret,
+    outlinerRef,
+    commit,
+    replaceText
+  })
+
   /** Toggle an inline markdown wrapper (bold/italic/strike/highlight/code/wikilink)
    *  around the focused textarea's selection: unwrap when the markers are already there
    *  (just outside or inside the selection), wrap otherwise. The selection is kept so
@@ -1278,108 +1102,6 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     pendingCaret.current = { id: fresh.id, pos: 'start' }
     setEditingId(fresh.id)
     commit(next)
-  }
-
-  // ---- find & replace (⌘F), scoped to this note ----
-  // Expand any collapsed ancestors so a matched block is actually visible before we jump.
-  const revealBlock = (idx: number): void => {
-    setBlocks((prev) => {
-      // An ancestor is any collapsed block whose foldable section CONTAINS idx —
-      // childrenRange handles headings (whose sections span level-0 paragraphs)
-      // and list subtrees alike; raw level math conflates the two and misses
-      // matches hidden under a collapsed heading.
-      let changed = false
-      const next = [...prev]
-      for (let i = 0; i < idx; i++) {
-        if (!next[i].collapsed) continue
-        const [s, e] = childrenRange(next, i)
-        if (idx >= s && idx < e) {
-          next[i] = { ...next[i], collapsed: false }
-          changed = true
-        }
-      }
-      return changed ? next : prev
-    })
-  }
-
-  // Scroll match `i` (wrapping) into view and highlight it in place. Crucially we do NOT
-  // focus the block — focus stays in the find box so Enter/⌘G keep cycling instead of
-  // editing the note. The active match is highlighted via <mark> in the rendered block.
-  const gotoMatch = (i: number): void => {
-    if (!matches.length) return
-    const n = ((i % matches.length) + matches.length) % matches.length
-    const m = matches[n]
-    setFind((f) => (f ? { ...f, idx: n } : f))
-    setEditingId(null) // render the block (so the highlight shows) and don't steal focus
-    revealBlock(m.index)
-    requestAnimationFrame(() => {
-      outlinerRef.current
-        ?.querySelector(`[data-block-id="${m.id}"]`)
-        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-      findInputRef.current?.focus() // keep the keyboard in the find box
-    })
-  }
-
-  const openFind = (): void => {
-    setFind((f) => f ?? { q: '', r: '', idx: -1 })
-    requestAnimationFrame(() => {
-      findInputRef.current?.focus()
-      findInputRef.current?.select()
-    })
-  }
-  // Close the bar. If `landAtMatch`, drop the caret into the active match so you can edit it.
-  const closeFind = (landAtMatch = false): void => {
-    const m = find && find.idx >= 0 && find.idx < matches.length ? matches[find.idx] : null
-    setFind(null)
-    if (landAtMatch && m) {
-      setEditingId(m.id)
-      pendingCaret.current = { id: m.id, pos: m.start, end: m.end }
-    } else {
-      outlinerRef.current?.focus()
-    }
-  }
-
-  // Replace the active match, then advance to the next one; stay in the find box.
-  const replaceCurrent = (): void => {
-    if (!find) return
-    if (find.idx < 0 || find.idx >= matches.length) return gotoMatch(0)
-    const m = matches[find.idx]
-    const b = blocks.find((x) => x.id === m.id)
-    if (!b) return
-    // If the replacement still contains the query, the recomputed list keeps an entry at
-    // this index for the just-inserted text — step past it so we don't re-land on it.
-    const stays = find.r.toLowerCase().includes(find.q.toLowerCase())
-    wantMatchIdx.current = find.idx + (stays ? 1 : 0)
-    replaceText(m.id, b.text.slice(0, m.start) + find.r + b.text.slice(m.end))
-    requestAnimationFrame(() => findInputRef.current?.focus())
-  }
-
-  // Replace every occurrence across the note as a single undo step.
-  const replaceAll = (): void => {
-    if (!find?.q) return
-    let count = 0
-    const next = blocks.map((b) => {
-      const re = new RegExp(escapeRegExp(find.q), 'gi')
-      const rep = b.text.replace(re, () => {
-        count++
-        return find.r
-      })
-      return rep === b.text ? b : { ...b, text: rep }
-    })
-    if (count > 0) commit(next)
-    setFind((f) => (f ? { ...f, idx: -1 } : f))
-  }
-
-  const onFindKeyDown = (e: React.KeyboardEvent): void => {
-    e.stopPropagation() // keep ⌘Z/⌘A etc. from reaching the outliner while typing here
-    const mod = e.metaKey || e.ctrlKey
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      closeFind(true) // drop the caret at the current match so you can edit it
-    } else if (e.key === 'Enter' || (mod && (e.key === 'g' || e.key === 'G'))) {
-      e.preventDefault()
-      if (matches.length) gotoMatch((find?.idx ?? -1) + (e.shiftKey ? -1 : 1))
-    }
   }
 
   // While zoomed into a list item, the view only shows that item's deeper descendants,
@@ -1822,7 +1544,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     // Find & replace (⌘F open, ⌘G / ⇧⌘G step through matches).
     if (mod && (e.key === 'f' || e.key === 'F')) return e.preventDefault(), openFind()
     if (mod && (e.key === 'g' || e.key === 'G'))
-      return e.preventDefault(), void (matches.length && gotoMatch((find?.idx ?? -1) + (e.shiftKey ? -1 : 1)))
+      return e.preventDefault(), stepMatch(e.shiftKey)
 
     // Undo / redo (block-level history).
     if (mod && (e.key === 'z' || e.key === 'Z')) return e.preventDefault(), void (e.shiftKey ? redo() : undo())
@@ -1991,9 +1713,6 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         blockId != null ? (word, x, y) => openSpellMenu(blockId, word, x, y) : undefined,
       onImageResize: blockId != null ? (src, w) => resizeImage(blockId, src, w) : undefined
     })
-
-  // The find match currently being cycled to (for in-place highlighting).
-  const activeMatch = find && find.idx >= 0 && find.idx < matches.length ? matches[find.idx] : null
 
   // Selection HIGHLIGHT mirrors selection SEMANTICS: operations on a selected
   // block take its whole subtree (selectedIndices), so the subtree must light up
@@ -2188,7 +1907,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     toggleTask,
     // A drag-reorder ends with a click on the handle — swallow it so it doesn't zoom.
     zoomInto: (id) => {
-      if (justDraggedRef.current) return
+      if (justDragged()) return
       zoomInto(id)
     },
     applyItem,
@@ -2206,33 +1925,34 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   // Foreign parses, file-set changes, alias changes (they shift resolution), and
   // edits to a supertag definition (they restyle entity chips) still bump.
   const dataTickRef = useRef(0)
-  const prevTickDeps = useRef({ parsed, files, spellTick })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const prevTickDeps = useRef({ files, spellTick, aliases: parsed[path]?.aliases ?? [] })
   const dataTick = useMemo(() => {
     const prev = prevTickDeps.current
-    prevTickDeps.current = { parsed, files, spellTick }
-    if (prev.files === files && prev.spellTick === spellTick && !path.startsWith(TAGS_DIR + '/')) {
-      let foreign = false
-      for (const k in parsed) {
-        if (k !== path && parsed[k] !== prev.parsed[k]) {
-          foreign = true
-          break
-        }
-      }
-      if (!foreign) {
-        for (const k in prev.parsed) {
-          if (!(k in parsed)) {
-            foreign = true
-            break
-          }
-        }
-      }
-      const aliasesSame =
-        JSON.stringify(parsed[path]?.aliases ?? []) === JSON.stringify(prev.parsed[path]?.aliases ?? [])
-      if (!foreign && aliasesSame) return dataTickRef.current
+    const aliases = parsed[path]?.aliases ?? []
+    prevTickDeps.current = { files, spellTick, aliases }
+    // The store now reports WHICH notes were re-parsed, so "did anything foreign
+    // change?" is a walk of that short list. This used to scan every parsed note
+    // twice (plus a JSON.stringify) on every 200ms rebuild while typing — O(vault)
+    // work on the one path that must stay cheap.
+    const onlyThisNote = parsedChanges.paths?.every((p) => p === path) ?? false
+    if (
+      prev.files === files &&
+      prev.spellTick === spellTick &&
+      onlyThisNote &&
+      // A supertag definition restyles entity chips everywhere, including here.
+      !path.startsWith(TAGS_DIR + '/') &&
+      // An alias change shifts how OTHER notes' links resolve into this one.
+      sameStrings(prev.aliases, aliases)
+    ) {
+      return dataTickRef.current
     }
     return ++dataTickRef.current
-  }, [parsed, files, index, spellTick])
+    // `parsed`/`path` are read but deliberately not deps: `parsedChanges` already
+    // fires exactly when `parsed` changed, and adding the map itself would defeat
+    // the whole point (it's a new object on every rebuild). `index` IS a dep —
+    // link resolution can shift without this note's own entry changing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [parsedChanges, files, index, spellTick])
 
   // Zoom: restrict to a block + its section, rebasing indent. Memoized because
   // visibleBlocks() is an O(n) scan and this sits in the per-keystroke render path.
@@ -2373,7 +2093,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
             className="find-btn"
             title="Previous match (⇧⌘G)"
             disabled={!matches.length}
-            onClick={() => gotoMatch((find.idx ?? -1) - 1)}
+            onClick={() => stepMatch(true)}
           >
             ↑
           </button>
@@ -2381,7 +2101,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
             className="find-btn"
             title="Next match (⌘G)"
             disabled={!matches.length}
-            onClick={() => gotoMatch((find.idx ?? -1) + 1)}
+            onClick={() => stepMatch(false)}
           >
             ↓
           </button>

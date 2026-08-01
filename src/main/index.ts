@@ -23,8 +23,8 @@ import {
   writeBases,
   writeCanvas,
   MEDIA_EXTS,
-  readAllNotes,
   readNote,
+  readNotes,
   readUserDictionary,
   renameNote,
   resolveAsset,
@@ -394,8 +394,9 @@ function registerIpc(): void {
     return text === null ? null : { path: p, text }
   })
 
-  ipcMain.handle('note:readAll', async (): Promise<NoteContent[]> => {
-    return readAllNotes()
+  ipcMain.handle('note:readMany', async (_e, paths: unknown): Promise<NoteContent[]> => {
+    if (!Array.isArray(paths)) return []
+    return readNotes(paths.filter(isStr))
   })
 
   ipcMain.handle('note:write', async (_e, p: string, text: string): Promise<WriteResult> => {
@@ -671,7 +672,7 @@ function registerAssetProtocol(): void {
       if (!MEDIA_EXTS.has(path.extname(rel).toLowerCase())) {
         return new Response('Not found', { status: 404 })
       }
-      const abs = resolveAsset(rel)
+      const abs = await resolveAsset(rel)
       if (!abs) return new Response('Not found', { status: 404 })
       // `await` so a rejection (file deleted between resolve and fetch) lands in
       // the catch below as a 400 instead of an unhandled protocol error.

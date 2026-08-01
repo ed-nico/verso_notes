@@ -1,23 +1,19 @@
 import { createHash } from 'crypto'
-import { promises as fs, realpathSync } from 'fs'
+import { promises as fs, realpathSync, type Stats } from 'fs'
 import path from 'path'
 import chokidar, { type FSWatcher } from 'chokidar'
 import { shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { AssetFile, CanvasMeta, FileEvent, NoteFile, Workspace, WriteResult } from '../shared/types.js'
+import { MEDIA_EXT_SET } from '../shared/media.js'
 
 /** Folders we never index (mirrors Octarine/Obsidian conventions). */
 const IGNORED_DIRS = new Set(['.git', 'node_modules', '.obsidian', '.octarine', '.trash', '.verso'])
 
 /** Every media type the app handles — single source of truth for the Assets view,
- *  the watcher, and the `verso://` protocol (they drifted apart as three lists:
- *  `.mov` was served but never watched, audio was watched but invisible in Assets). */
-export const MEDIA_EXTS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
-  '.mp4', '.webm', '.mov',
-  '.mp3', '.wav', '.m4a',
-  '.pdf'
-])
+ *  the watcher, and the `verso://` protocol. Defined once in `shared/media.ts`
+ *  so the renderer's asset-link filter can't drift from what main actually serves. */
+export const MEDIA_EXTS = MEDIA_EXT_SET
 
 /** Non-markdown file types surfaced in the Assets view. */
 const ASSET_EXTS = MEDIA_EXTS
@@ -49,14 +45,26 @@ function errMsg(e: unknown): string {
   return msg.split(',')[0].trim() || 'Unknown error'
 }
 
+/** Monotonic counter making each in-flight atomicWrite's temp file unique. */
+let tmpSeq = 0
+
 /**
- * Write `data` atomically: write a sibling tmp file, fsync it, then rename over the
- * destination — so neither a process crash nor a power loss mid-write can leave a
- * truncated or empty file behind (rename alone doesn't survive power loss on all
- * filesystems; the data must be flushed before the rename).
+ * Write `data` atomically: write a sibling tmp file, fsync it, rename over the
+ * destination, then fsync the containing directory — so neither a process crash
+ * nor a power loss mid-write can leave a truncated or empty file behind.
+ *
+ * Both syncs matter. Without the file sync, rename alone doesn't survive power
+ * loss on all filesystems (the data must be flushed first). Without the DIRECTORY
+ * sync, the rename itself may not be durable: the file content is on disk but the
+ * directory entry still points at the old inode, so the write silently reverts.
+ *
+ * The temp name carries a per-call sequence number, not just the pid: writeNote /
+ * writeCanvas / writeBases / the snapshotter all share this primitive and are not
+ * serialized against each other in main, so a pid-only name let two concurrent
+ * writes to the same path fight over one temp file.
  */
 export async function atomicWrite(filePath: string, data: string | Buffer): Promise<void> {
-  const tmp = `${filePath}.${process.pid}.tmp`
+  const tmp = `${filePath}.${process.pid}.${tmpSeq++}.tmp`
   try {
     const fh = await fs.open(tmp, 'w')
     try {
@@ -66,6 +74,18 @@ export async function atomicWrite(filePath: string, data: string | Buffer): Prom
       await fh.close()
     }
     await fs.rename(tmp, filePath)
+    // Best effort: some platforms (notably Windows) refuse to open a directory,
+    // and a failure here costs durability, not correctness.
+    try {
+      const dir = await fs.open(path.dirname(filePath), 'r')
+      try {
+        await dir.sync()
+      } finally {
+        await dir.close()
+      }
+    } catch {
+      /* directory fsync unsupported here */
+    }
   } catch (e) {
     try {
       await fs.unlink(tmp)
@@ -161,34 +181,71 @@ async function statFile(root: string, abs: string): Promise<NoteFile> {
   }
 }
 
-/** Recursively collect all .md files under root, skipping ignored/dot dirs. */
-async function collectNotes(root: string, dir = root): Promise<NoteFile[]> {
-  let entries
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true })
-  } catch (e) {
-    // One unreadable subdirectory (EACCES, cloud-sync placeholder) must not fail
-    // the whole vault open — skip it, like listAssets/listCanvases do.
-    if (dir === root) throw e // ...but an unreadable ROOT is a real failure
-    logErr(`collectNotes ${dir}`, e)
-    return []
-  }
-  const out: NoteFile[] = []
-  for (const entry of entries) {
-    const abs = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue
-      // Skip hidden dot-folders by default.
-      if (entry.name.startsWith('.')) continue
-      out.push(...(await collectNotes(root, abs)))
-    } else if (entry.isFile() && isMarkdown(entry.name)) {
-      try {
-        out.push(await statFile(root, abs))
-      } catch (e) {
-        logErr(`collectNotes stat ${abs}`, e)
+/** How many directory reads / file stats to have in flight at once. Enough to keep
+ *  the syscall pipeline busy, well under any descriptor limit. */
+const WALK_CONCURRENCY = 64
+
+/**
+ * Collect all .md files under root, skipping ignored/dot dirs.
+ *
+ * This runs BEFORE the renderer is handed the workspace, so it sits directly on the
+ * cold-start path. It used to recurse depth-first with a sequential `await` per
+ * subdirectory AND per file stat — on a few thousand notes that is a few thousand
+ * serialized syscall round trips, and it dominated startup. Now directories are read
+ * in parallel batches and file stats are issued in bounded-parallel batches.
+ *
+ * Results are sorted by path so the file list (and therefore which note opens on
+ * launch) is deterministic instead of depending on filesystem readdir order.
+ */
+async function collectNotes(root: string): Promise<NoteFile[]> {
+  const fileAbs: string[] = []
+  const frontier = [root]
+
+  while (frontier.length) {
+    const batch = frontier.splice(0, WALK_CONCURRENCY)
+    const listings = await Promise.all(
+      batch.map(async (dir) => {
+        try {
+          return { dir, entries: await fs.readdir(dir, { withFileTypes: true }) }
+        } catch (e) {
+          // One unreadable subdirectory (EACCES, cloud-sync placeholder) must not
+          // fail the whole vault open — skip it, like listAssets/listCanvases do.
+          if (dir === root) throw e // ...but an unreadable ROOT is a real failure
+          logErr(`collectNotes ${dir}`, e)
+          return null
+        }
+      })
+    )
+    for (const listing of listings) {
+      if (!listing) continue
+      for (const entry of listing.entries) {
+        const abs = path.join(listing.dir, entry.name)
+        if (entry.isDirectory()) {
+          if (IGNORED_DIRS.has(entry.name)) continue
+          if (entry.name.startsWith('.')) continue // hidden dot-folders
+          frontier.push(abs)
+        } else if (entry.isFile() && isMarkdown(entry.name)) {
+          fileAbs.push(abs)
+        }
       }
     }
   }
+
+  const out: NoteFile[] = []
+  for (let i = 0; i < fileAbs.length; i += WALK_CONCURRENCY) {
+    const chunk = await Promise.all(
+      fileAbs.slice(i, i + WALK_CONCURRENCY).map(async (abs) => {
+        try {
+          return await statFile(root, abs)
+        } catch (e) {
+          logErr(`collectNotes stat ${abs}`, e)
+          return null
+        }
+      })
+    )
+    for (const f of chunk) if (f) out.push(f)
+  }
+  out.sort((a, b) => a.path.localeCompare(b.path))
   return out
 }
 
@@ -380,13 +437,19 @@ function isWithinRoot(root: string, target: string): boolean {
  * True if `abs` — or, for a not-yet-created file, its nearest existing ancestor —
  * resolves through symlinks to a real path outside the workspace root. Defends
  * against a symlink planted inside the vault that points elsewhere.
+ *
+ * Async on purpose. This runs on EVERY note read/write, and the synchronous
+ * `realpathSync` it used to call blocked the main process's event loop — which
+ * also stalls the file watcher and every other IPC handler. On a network mount
+ * or a cloud-sync placeholder folder that is a visible freeze, and the loop
+ * walking up ancestors could issue several blocking calls per write.
  */
-function escapesRoot(abs: string): boolean {
+async function escapesRoot(abs: string): Promise<boolean> {
   if (!currentRoot) return true
   let p = abs
   for (;;) {
     try {
-      const real = realpathSync(p)
+      const real = await fs.realpath(p)
       const tail = path.relative(p, abs)
       const full = tail ? path.resolve(real, tail) : real
       return !isWithinRoot(currentRoot, full)
@@ -398,11 +461,11 @@ function escapesRoot(abs: string): boolean {
   }
 }
 
-function resolveInRoot(rel: string): string {
+async function resolveInRoot(rel: string): Promise<string> {
   if (!currentRoot) throw new Error('No workspace open')
   const abs = path.resolve(currentRoot, rel)
   // Path-containment guard against `..` traversal, then a symlink-aware guard.
-  if (!isWithinRoot(currentRoot, abs) || escapesRoot(abs)) {
+  if (!isWithinRoot(currentRoot, abs) || (await escapesRoot(abs))) {
     throw new Error('Path escapes workspace')
   }
   return abs
@@ -423,19 +486,24 @@ function isSafeNotePath(rel: string): boolean {
   return isMarkdown(rel) && hasCleanSegments(rel)
 }
 
-/** Read every markdown file in the workspace, for index building. */
-export async function readAllNotes(): Promise<{ path: string; text: string }[]> {
+/**
+ * Read a batch of notes by workspace-relative path. Unreadable or unsafe paths are
+ * omitted rather than failing the batch.
+ *
+ * The renderer calls this in chunks so it can paint and stay responsive while the
+ * vault hydrates, instead of blocking on one read-the-entire-vault round trip.
+ */
+export async function readNotes(rels: string[]): Promise<{ path: string; text: string }[]> {
   if (!currentRoot) return []
-  const files = await collectNotes(currentRoot)
-  // Read in bounded batches: a Promise.all over every file opens tens of thousands of
+  // Bounded concurrency: a Promise.all over every file opens tens of thousands of
   // descriptors at once and hits the OS limit (EMFILE) on large vaults.
   const CONCURRENCY = 64
   const out: { path: string; text: string }[] = []
-  for (let i = 0; i < files.length; i += CONCURRENCY) {
+  for (let i = 0; i < rels.length; i += CONCURRENCY) {
     const chunk = await Promise.all(
-      files.slice(i, i + CONCURRENCY).map(async (f) => {
-        const text = await readNote(f.path)
-        return text === null ? null : { path: f.path, text }
+      rels.slice(i, i + CONCURRENCY).map(async (rel) => {
+        const text = await readNote(rel)
+        return text === null ? null : { path: rel, text }
       })
     )
     for (const r of chunk) if (r) out.push(r)
@@ -462,7 +530,7 @@ function conflictPathFor(rel: string): string {
 export async function readNote(rel: string): Promise<string | null> {
   if (!isSafeNotePath(rel)) return null
   try {
-    const abs = resolveInRoot(rel)
+    const abs = await resolveInRoot(rel)
     const text = await fs.readFile(abs, 'utf8')
     try {
       knownMtimes.set(rel, (await fs.stat(abs)).mtimeMs)
@@ -557,7 +625,7 @@ async function maybeSnapshot(rel: string, abs: string): Promise<void> {
 export async function writeNote(rel: string, text: string): Promise<WriteResult> {
   if (!isSafeNotePath(rel)) return { ok: false, error: 'Not a note path' }
   try {
-    const abs = resolveInRoot(rel)
+    const abs = await resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     await maybeSnapshot(rel, abs)
 
@@ -573,7 +641,7 @@ export async function writeNote(rel: string, text: string): Promise<WriteResult>
           // back) is not a conflict.
           if (theirs !== text) {
             conflictPath = conflictPathFor(rel)
-            await atomicWrite(resolveInRoot(conflictPath), theirs)
+            await atomicWrite(await resolveInRoot(conflictPath), theirs)
             // Deliberately NOT echo-suppressed: the watcher's `add` for the
             // conflict file is how it appears in the renderer's sidebar.
           }
@@ -601,7 +669,7 @@ export async function writeNote(rel: string, text: string): Promise<WriteResult>
 export async function createNote(rel: string, text: string): Promise<NoteFile | null> {
   if (!isSafeNotePath(rel)) return null
   try {
-    const abs = resolveInRoot(rel)
+    const abs = await resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     // Don't clobber an existing file.
     await fs.writeFile(abs, text, { encoding: 'utf8', flag: 'wx' })
@@ -617,8 +685,8 @@ export async function createNote(rel: string, text: string): Promise<NoteFile | 
 export async function renameNote(oldRel: string, newRel: string): Promise<NoteFile | null> {
   if (!isSafeNotePath(oldRel) || !isSafeNotePath(newRel)) return null
   try {
-    const from = resolveInRoot(oldRel)
-    const to = resolveInRoot(newRel)
+    const from = await resolveInRoot(oldRel)
+    const to = await resolveInRoot(newRel)
     if (from === to) return statFile(currentRoot!, to)
     // Refuse to clobber an existing file.
     try {
@@ -649,7 +717,7 @@ export async function deleteNote(rel: string): Promise<boolean> {
   // never dot-paths (.git, .verso, …); those aren't user files.
   if (!hasCleanSegments(rel)) return false
   try {
-    const abs = resolveInRoot(rel)
+    const abs = await resolveInRoot(rel)
     noteSelfDelete(rel) // suppress the unlink echo (the renderer already removed it)
     await shell.trashItem(abs)
     knownMtimes.delete(rel)
@@ -662,7 +730,7 @@ export async function deleteNote(rel: string): Promise<boolean> {
 
 export async function revealNote(rel: string): Promise<void> {
   try {
-    shell.showItemInFolder(resolveInRoot(rel))
+    shell.showItemInFolder(await resolveInRoot(rel))
   } catch (e) {
     logErr(`revealNote ${rel}`, e)
   }
@@ -694,49 +762,79 @@ export async function saveAsset(filename: string, base64: string): Promise<strin
   }
 }
 
-/** Recursively list every non-markdown asset under root (skipping ignored/dot dirs). */
-export async function listAssets(): Promise<AssetFile[]> {
-  if (!currentRoot) return []
-  const root = currentRoot
-  const out: AssetFile[] = []
-  const walk = async (dir: string): Promise<void> => {
-    let entries
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      const abs = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
-        await walk(abs)
-      } else if (entry.isFile() && ASSET_EXTS.has(path.extname(entry.name).toLowerCase())) {
+/**
+ * Walk the vault in parallel batches, returning the absolute paths of files matching
+ * `keep`. Shared by the asset and canvas listers, which were each doing the same
+ * sequential depth-first recursion as collectNotes.
+ */
+async function walkFiles(root: string, keep: (name: string) => boolean): Promise<string[]> {
+  const found: string[] = []
+  const frontier = [root]
+  while (frontier.length) {
+    const batch = frontier.splice(0, WALK_CONCURRENCY)
+    const listings = await Promise.all(
+      batch.map(async (dir) => {
         try {
-          const stat = await fs.stat(abs)
-          out.push({
-            path: toRelative(root, abs),
-            name: entry.name,
-            ext: path.extname(entry.name).slice(1).toLowerCase(),
-            size: stat.size,
-            added: stat.birthtimeMs || stat.mtimeMs
-          })
+          return { dir, entries: await fs.readdir(dir, { withFileTypes: true }) }
         } catch {
-          /* skip unreadable */
+          return null // skip unreadable
+        }
+      })
+    )
+    for (const listing of listings) {
+      if (!listing) continue
+      for (const entry of listing.entries) {
+        const abs = path.join(listing.dir, entry.name)
+        if (entry.isDirectory()) {
+          if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
+          frontier.push(abs)
+        } else if (entry.isFile() && keep(entry.name)) {
+          found.push(abs)
         }
       }
     }
   }
-  await walk(root)
+  return found
+}
+
+/** Stat `paths` in bounded-parallel batches, dropping any that fail. */
+async function statAll<T>(paths: string[], make: (abs: string, stat: Stats) => T): Promise<T[]> {
+  const out: T[] = []
+  for (let i = 0; i < paths.length; i += WALK_CONCURRENCY) {
+    const chunk = await Promise.all(
+      paths.slice(i, i + WALK_CONCURRENCY).map(async (abs) => {
+        try {
+          return make(abs, await fs.stat(abs))
+        } catch {
+          return null // skip unreadable
+        }
+      })
+    )
+    for (const r of chunk) if (r !== null) out.push(r)
+  }
   return out
 }
 
+/** Recursively list every non-markdown asset under root (skipping ignored/dot dirs). */
+export async function listAssets(): Promise<AssetFile[]> {
+  if (!currentRoot) return []
+  const root = currentRoot
+  const paths = await walkFiles(root, (name) => ASSET_EXTS.has(path.extname(name).toLowerCase()))
+  return statAll(paths, (abs, stat) => ({
+    path: toRelative(root, abs),
+    name: path.basename(abs),
+    ext: path.extname(abs).slice(1).toLowerCase(),
+    size: stat.size,
+    added: stat.birthtimeMs || stat.mtimeMs
+  }))
+}
+
 /** Resolve a workspace-relative path to an absolute path inside the vault, or null. */
-export function resolveAsset(rel: string): string | null {
+export async function resolveAsset(rel: string): Promise<string | null> {
   if (!currentRoot || !hasCleanSegments(rel)) return null
   const abs = path.join(currentRoot, rel)
   if (!isWithinRoot(currentRoot, abs)) return null
-  if (escapesRoot(abs)) return null
+  if (await escapesRoot(abs)) return null
   return abs
 }
 
@@ -755,37 +853,15 @@ function canvasMeta(root: string, abs: string, mtimeMs: number): CanvasMeta {
 export async function listCanvases(): Promise<CanvasMeta[]> {
   if (!currentRoot) return []
   const root = currentRoot
-  const out: CanvasMeta[] = []
-  const walk = async (dir: string): Promise<void> => {
-    let entries
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch {
-      return
-    }
-    for (const entry of entries) {
-      const abs = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (IGNORED_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
-        await walk(abs)
-      } else if (entry.isFile() && isCanvas(entry.name)) {
-        try {
-          const stat = await fs.stat(abs)
-          out.push(canvasMeta(root, abs, stat.mtimeMs))
-        } catch {
-          /* skip unreadable */
-        }
-      }
-    }
-  }
-  await walk(root)
+  const paths = await walkFiles(root, isCanvas)
+  const out = await statAll(paths, (abs, stat) => canvasMeta(root, abs, stat.mtimeMs))
   return out.sort((a, b) => b.mtime - a.mtime)
 }
 
 export async function readCanvas(rel: string): Promise<unknown> {
   if (!isCanvas(rel)) return null
   try {
-    return JSON.parse(await fs.readFile(resolveInRoot(rel), 'utf8'))
+    return JSON.parse(await fs.readFile(await resolveInRoot(rel), 'utf8'))
   } catch (e) {
     logErr(`readCanvas ${rel}`, e)
     return null
@@ -795,7 +871,7 @@ export async function readCanvas(rel: string): Promise<unknown> {
 export async function writeCanvas(rel: string, data: unknown): Promise<WriteResult> {
   if (!isCanvas(rel)) return { ok: false, error: 'Not a .canvas path' }
   try {
-    const abs = resolveInRoot(rel)
+    const abs = await resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     const json = JSON.stringify(data, null, 2)
     await atomicWrite(abs, json)
@@ -811,7 +887,7 @@ export async function writeCanvas(rel: string, data: unknown): Promise<WriteResu
 export async function createCanvas(rel: string): Promise<CanvasMeta | null> {
   if (!isCanvas(rel)) return null
   try {
-    const abs = resolveInRoot(rel)
+    const abs = await resolveInRoot(rel)
     await fs.mkdir(path.dirname(abs), { recursive: true })
     // Don't clobber an existing file.
     await fs.writeFile(abs, JSON.stringify({ nodes: [], edges: [] }, null, 2), { encoding: 'utf8', flag: 'wx' })
@@ -826,8 +902,8 @@ export async function createCanvas(rel: string): Promise<CanvasMeta | null> {
 export async function renameCanvas(oldRel: string, newRel: string): Promise<CanvasMeta | null> {
   if (!isCanvas(oldRel) || !isCanvas(newRel)) return null
   try {
-    const from = resolveInRoot(oldRel)
-    const to = resolveInRoot(newRel)
+    const from = await resolveInRoot(oldRel)
+    const to = await resolveInRoot(newRel)
     if (from === to) {
       const stat = await fs.stat(to)
       return canvasMeta(currentRoot!, to, stat.mtimeMs)

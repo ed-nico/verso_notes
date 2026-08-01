@@ -1,0 +1,687 @@
+/*
+ * The block outliner and its rich rendered view.
+ *
+ * Part of the stylesheet split out of the former single styles.css.
+ * ORDER MATTERS: these files are imported in sequence by styles.css and later
+ * rules (notably the light-theme overrides) depend on appearing after earlier
+ * ones. Move a rule between files only if it stays in the same relative order.
+ */
+/* ---------- Outliner ---------- */
+.outliner {
+  font-size: inherit;
+  line-height: 1.6;
+}
+
+.ol-breadcrumb {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.ol-breadcrumb span {
+  cursor: pointer;
+}
+.ol-breadcrumb span:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* In-note find & replace bar (⌘F). Pinned via position:fixed (set in JS from the
+   scroll-area rect) so it stays put while cycling matches and scrolling. */
+.find-bar {
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 7px 9px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.find-input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 8px;
+  width: 160px;
+  outline: none;
+}
+.find-input:focus {
+  border-color: var(--accent);
+}
+.find-count {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 38px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.find-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 3px 8px;
+  line-height: 1.2;
+}
+.find-btn.find-text {
+  font-size: 12px;
+}
+.find-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.find-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.find-close {
+  border: none;
+  font-size: 16px;
+  margin-left: auto;
+}
+/* The active match, highlighted in place within the rendered block. */
+.find-hit {
+  background: #ffcf5c;
+  color: #1a1a1e;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* Word-style formatting toolbar: sticks to the top of the editor's scroll viewport.
+   Buttons act on the focused block's textarea selection (see BlockEditor's applyInline). */
+.fmt-bar {
+  position: sticky;
+  top: 8px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+  margin: 0 0 12px;
+  padding: 4px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-sm);
+}
+.fmt-btn {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.fmt-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.fmt-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.fmt-btn.on {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+.fmt-bold {
+  font-weight: 700;
+}
+.fmt-italic {
+  font-style: italic;
+  font-family: Georgia, 'Times New Roman', serif;
+}
+.fmt-strike {
+  text-decoration: line-through;
+}
+.fmt-hl {
+  text-decoration: underline;
+  text-decoration-color: #ffd54f;
+  text-decoration-thickness: 3px;
+  text-underline-offset: 3px;
+}
+.fmt-mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 11px;
+}
+.fmt-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+  flex-shrink: 0;
+}
+
+/* ==highlight== token in rendered markdown. */
+mark.tok-mark {
+  background: color-mix(in srgb, #ffd54f 32%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.ol-fold {
+  flex-shrink: 0;
+  width: 16px;
+  font-size: 10px;
+  color: transparent;
+  cursor: pointer;
+  user-select: none;
+  text-align: center;
+  margin-top: 7px;
+  transition: color 0.1s;
+}
+.bl-row:hover .ol-fold {
+  color: var(--text-faint);
+}
+.ol-fold:hover {
+  color: var(--text) !important;
+}
+
+.ol-bullet {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  /* Center the dot on the first text line: 3px rendered-padding + half the 1.6em line
+     box, minus half the dot's height. Tracks the editor font size via em. */
+  margin: calc(3px + 0.8em - 3.5px) 12px 0 3px;
+  cursor: pointer;
+  transition: box-shadow 0.1s, background 0.1s;
+}
+.ol-bullet:hover {
+  background: var(--accent);
+}
+.ol-bullet.has-hidden {
+  box-shadow: 0 0 0 4px var(--bg-hover);
+}
+
+/* Drag-reorder drop indicator: a line at the target gap, indented to the drop depth. */
+.ol-drop-line {
+  position: fixed;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 60;
+}
+.ol-drop-line::before {
+  content: '';
+  position: absolute;
+  left: -6px;
+  top: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* Ordered-list marker: the number, replacing the bullet dot. Padding/line-height mirror
+   .ol-rendered so the number's baseline lines up with the item text. */
+.ol-number {
+  flex-shrink: 0;
+  min-width: 1.4em;
+  margin: 0 6px 0 0;
+  padding: 3px 0;
+  line-height: 1.6;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+  transition: color 0.1s;
+}
+.ol-number:hover {
+  color: var(--accent);
+}
+.ol-number.has-hidden {
+  text-shadow: 0 0 6px var(--bg-hover);
+  font-weight: 600;
+}
+
+/* Task checkbox doubles as the line's marker (replaces the bullet dot). */
+.ol-checkbox {
+  flex-shrink: 0;
+  margin: 6px 9px 0 1px;
+  cursor: pointer;
+}
+
+.ol-content {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.ol-input,
+.ol-rendered {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.6;
+  width: 100%;
+}
+
+.ol-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  resize: none;
+  overflow: hidden;
+  /* Vertical padding thickens the click target; kept equal on input + rendered so
+     switching between edit/read doesn't shift the text. */
+  padding: 3px 0;
+  margin: 0;
+  caret-color: var(--accent);
+  display: block;
+  /* Follow the editor font/size so typing matches the rendered text. */
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+/* Code input stays monospace regardless of the reading font. */
+.ol-input.bl-code-input {
+  font-family: var(--font-mono);
+}
+
+.ol-rendered {
+  cursor: text;
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 3px 0;
+}
+
+.ol-placeholder {
+  color: var(--text-faint);
+}
+/* Click target below the last block — click anywhere here to write at the end. */
+.ol-tail {
+  min-height: 3vh;
+  cursor: text;
+}
+.ol-done {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+.ol-ac {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  margin-top: 6px;
+  min-width: 340px;
+  max-width: 560px;
+  padding: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.ol-ac-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ol-ac-item.sel {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated));
+}
+.ol-ac-item:hover:not(.sel) {
+  background: var(--bg-hover);
+}
+.ol-ac-icon {
+  flex: none;
+  font-size: 11px;
+  opacity: 0.55;
+  width: 22px;
+  text-align: center;
+}
+.ol-ac-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+}
+/* Link rows: two-line title + breadcrumb (matches the wikilink picker design). */
+.ol-ac-item.link {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: normal;
+  padding: 8px 11px;
+}
+.ol-ac-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ol-ac-crumbs {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.3;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ol-ac-sep {
+  opacity: 0.55;
+  padding: 0 5px;
+}
+
+/* ---------- Block editor (unified rich view) ---------- */
+.bl-row {
+  display: flex;
+  align-items: flex-start;
+  margin: 1px 0;
+  border-radius: 4px;
+}
+
+/*
+ * Offscreen rows cost nothing to lay out or paint.
+ *
+ * A long note is thousands of rows, each rendering inline markdown into a good
+ * many DOM nodes. Laying all of that out on open — and again on every reflow
+ * (window resize, sidebar toggle, font-size change) — was the editor's dominant
+ * cost at scale. `content-visibility: auto` lets the engine skip everything
+ * outside the viewport while keeping the rows in the DOM, which matters here:
+ * drag-reorder walks `[data-block-id]` elements, find-and-replace scrolls to a
+ * matched row, and PDF export prints the live document. True React windowing
+ * would break all three; this doesn't.
+ *
+ * `contain-intrinsic-size: auto <len>` makes the engine remember each row's real
+ * height once measured, so the scrollbar stays honest instead of jittering.
+ */
+.bl-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+
+/* Printing must render the WHOLE note, not just what was on screen — the PDF
+   export prints this document. */
+@media print {
+  .bl-cv {
+    content-visibility: visible;
+  }
+}
+/* Prose paragraphs get document-like spacing; list items stay tight. The block's own
+   padding now carries most of the gap, so the margin (the only non-clickable strip) is small. */
+.bl-row.bl-paragraph {
+  margin: 2px 0;
+}
+.bl-row.selected {
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.bl-row.selected ::selection {
+  background: transparent;
+}
+.outliner:focus {
+  outline: none;
+}
+.bl-row.is-heading {
+  margin-top: 18px;
+}
+.bl-row.is-heading:first-child {
+  margin-top: 0;
+}
+/* Headings: coloured + bold, modestly larger than body per level (h4+ stay body-size).
+   .ol-input and .ol-rendered must always share a size — the caret overlay depends on it. */
+.ol-content.tok-heading .ol-input,
+.ol-content.tok-heading .ol-rendered {
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--heading);
+}
+.ol-content.tok-h1 .ol-input,
+.ol-content.tok-h1 .ol-rendered {
+  font-size: 1.2em;
+}
+.ol-content.tok-h2 .ol-input,
+.ol-content.tok-h2 .ol-rendered {
+  font-size: 1.1em;
+  opacity: 0.88;
+}
+.ol-content.tok-h3 .ol-input,
+.ol-content.tok-h3 .ol-rendered {
+  font-size: 1.05em;
+  font-weight: 600;
+  opacity: 0.78;
+}
+.ol-content.tok-h4 .ol-input,
+.ol-content.tok-h4 .ol-rendered {
+  font-size: 1em;
+  font-weight: 600;
+  opacity: 0.68;
+}
+.ol-content.tok-h5 .ol-input,
+.ol-content.tok-h5 .ol-rendered {
+  font-size: 1em;
+  font-weight: 500;
+  opacity: 0.62;
+}
+.ol-content.tok-h6 .ol-input,
+.ol-content.tok-h6 .ol-rendered {
+  font-size: 1em;
+  font-weight: 500;
+  opacity: 0.55;
+}
+
+.bl-code {
+  position: relative;
+  margin: 4px 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  overflow-x: auto;
+}
+/* Language tag (e.g. ```json) shown in the corner of the code block. */
+.bl-code[data-lang]::before {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0;
+  right: 8px;
+  transform: translateY(-50%);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: lowercase;
+}
+.bl-code code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  color: var(--text);
+}
+.bl-code-input {
+  font-family: var(--font-mono) !important;
+  font-size: 13px !important;
+  line-height: 1.5 !important;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  white-space: pre;
+}
+/* Live-highlighted code editing: the textarea's own glyphs go transparent (caret stays)
+   and an identically-metriced hljs layer paints the colours underneath. */
+.code-edit-wrap {
+  position: relative;
+  width: 100%;
+}
+.bl-code-input.code-live {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  caret-color: var(--text);
+}
+.code-hl-layer {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: var(--text);
+}
+
+/* ---------- Right sidebar (properties / calendar) ---------- */
+.rightbar {
+  width: 280px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 10px 14px 16px;
+}
+.rightbar-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* ---------- Properties panel ---------- */
+.props-section {
+  margin-bottom: 18px;
+}
+.props-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.props-empty {
+  color: var(--text-faint);
+  font-size: 13px;
+  font-style: italic;
+}
+.prop-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+.prop-key {
+  width: 72px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 2px 0;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.prop-key-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prop-icon {
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+.prop-key:hover {
+  color: var(--text);
+}
+.prop-key:hover .prop-icon {
+  color: var(--text-dim);
+}
+.prop-val {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.prop-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+}
+.prop-input:focus {
+  border-color: var(--accent-dim);
+}
+select.prop-input {
+  cursor: pointer;
+}
+.prop-del {
+  background: transparent;
+  border: none;
+  color: var(--text-faint);
+  font-size: 11px;
+  opacity: 0;
+  padding: 2px 4px;
+}
+.prop-row:hover .prop-del {
+  opacity: 1;
+}
+.prop-del:hover {
+  color: var(--danger);
+}
+.prop-add {
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 6px 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+.prop-add:hover {
+  color: var(--text);
+  border-color: var(--accent-dim);
+}
+.prop-newkey {
+  margin-top: 6px;
+}

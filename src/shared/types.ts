@@ -107,8 +107,10 @@ export interface VersoApi {
   /** Re-open a previously chosen workspace by path (e.g. on startup). */
   loadWorkspace: (root: string) => Promise<Workspace | null>
   readNote: (path: string) => Promise<NoteContent | null>
-  /** Read every note in the workspace at once (used to build the link index). */
-  readAll: () => Promise<NoteContent[]>
+  /** Read a batch of notes by path. The renderer hydrates the vault in chunks so the
+   *  UI is usable before the whole vault has been read (see the store's `hydrateVault`);
+   *  missing/unreadable paths are simply omitted from the result. */
+  readNotes: (paths: string[]) => Promise<NoteContent[]>
   writeNote: (path: string, text: string) => Promise<WriteResult>
   createNote: (path: string, text: string) => Promise<NoteFile | null>
   /** Move/rename a note on disk. Returns the new file, or null on failure (e.g. target exists). */

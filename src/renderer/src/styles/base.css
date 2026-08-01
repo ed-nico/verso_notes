@@ -1,0 +1,89 @@
+/*
+ * Design tokens, reset, typography and scrollbars.
+ *
+ * Part of the stylesheet split out of the former single styles.css.
+ * ORDER MATTERS: these files are imported in sequence by styles.css and later
+ * rules (notably the light-theme overrides) depend on appearing after earlier
+ * ones. Move a rule between files only if it stays in the same relative order.
+ */
+:root {
+  /* Tells the OS to draw native scrollbars / form controls dark; the light theme flips it. */
+  color-scheme: dark;
+  --bg: #151519;
+  --bg-panel: #1a1a1f;
+  --bg-elevated: #202026;
+  --bg-hover: #26262e;
+  --border: #2b2b33;
+  --text: #e2e2e8;
+  /* Secondary/tertiary text kept clearly legible on the dark canvas — Eds found
+     the dimmer greys hard to read; prefer erring brighter for these two. */
+  --text-dim: #a6a6b2;
+  --text-faint: #75757f;
+  --accent: #7c8cff;
+  --accent-dim: #4a4f7a;
+  --link: #8fa1ff;
+  --heading: #d2823a;
+  --tag: #67bfa0;
+  --danger: #e06c75;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
+  /* Layered elevation shadows — softer in light mode (overridden below). */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 3px 12px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 2px 6px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 6px 16px rgba(0, 0, 0, 0.3), 0 24px 56px rgba(0, 0, 0, 0.45);
+}
+
+/* Text selection tracks the accent instead of the browser default. */
+::selection {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  color: var(--text);
+  background: var(--bg);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Themed scrollbars — a slim, rounded thumb that uses the palette so it tracks light/dark.
+   The transparent border + padding-box clip makes it float over any surface (sidebar,
+   editor, panels) without a mismatched track. */
+::-webkit-scrollbar {
+  width: 13px;
+  height: 13px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-dim) 45%, transparent);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--text-dim) 75%, transparent);
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}

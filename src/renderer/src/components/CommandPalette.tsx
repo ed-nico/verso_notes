@@ -15,7 +15,6 @@ export function CommandPalette(): React.JSX.Element | null {
   const open = useStore((s) => s.paletteOpen)
   const setPalette = useStore((s) => s.setPalette)
   const files = useStore((s) => s.files)
-  const texts = useStore((s) => s.texts)
   const history = useStore((s) => s.history)
   const activePath = useStore((s) => s.activePath)
   const templates = useMemo(() => templatesFromFiles(files), [files])
@@ -128,7 +127,10 @@ export function CommandPalette(): React.JSX.Element | null {
       .filter((x) => x.s >= 0)
       .sort((a, b) => b.s - a.s)
       .map((x) => x.c)
-    const noteHits: Item[] = searchNotes(q, files, texts, 12, {
+    // Read `texts` imperatively: the map is mutated in place while typing, so a
+    // subscription would never fire anyway — and the palette already re-renders
+    // on every query keystroke, which is exactly when this needs to be fresh.
+    const noteHits: Item[] = searchNotes(q, files, useStore.getState().texts, 12, {
       aliasOf: (p) => useStore.getState().parsed[p]?.aliases ?? [],
       parsed: useStore.getState().parsed
     }).map((h) => ({
@@ -143,7 +145,7 @@ export function CommandPalette(): React.JSX.Element | null {
       : [{ id: 'create', label: `Create note “${q}”`, icon: '＋', run: () => act(() => void navigate(q)) }]
     return [...cmdHits, ...noteHits, ...create]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, commands, recent, files, texts])
+  }, [query, commands, recent, files])
 
   useEffect(() => {
     if (sel >= items.length) setSel(Math.max(0, items.length - 1))

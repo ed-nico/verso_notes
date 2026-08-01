@@ -53,7 +53,12 @@ const SECTIONS: Section[] = [
       { k: '{{query [[Project Alpha]] done}}', d: 'Completed items that mention [[Project Alpha]].' },
       { k: '{{query todo -#someday after:2026-01-01}}', d: 'Open tasks from this year, skipping #someday.' },
       { k: '{{query prop:status=active #idea}}', d: '#idea blocks in notes whose status property is “active”.' },
-      { k: 'tip', d: 'Stack several query blocks in one note to make a dashboard. For richer filtering (group, totals, gallery), use a Base instead.' }
+      { k: 'sort:key', d: 'Order results by date, name, path, text, line or status. Prefix with “-” to reverse (sort:-date = newest first). Rows with nothing to sort by always go last.' },
+      { k: 'limit:N', d: 'Keep at most N results. Applied after sorting, so “sort:-date limit:10” really is the ten most recent.' },
+      { k: 'group:key', d: 'Bucket results by note, tag, date or status. Groups appear in the order their first row does, so group: combines with sort:.' },
+      { k: 'as:table', d: 'Render results as a table (block, note, date, tags) instead of a list.' },
+      { k: '{{query todo sort:-date limit:10 group:note}}', d: 'Your ten most recent open tasks, arranged by the note they live in.' },
+      { k: 'tip', d: 'Stack several query blocks in one note to make a dashboard. For saved views over note properties (galleries, column layouts), use a Base instead.' }
     ]
   },
   {

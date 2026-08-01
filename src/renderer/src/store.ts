@@ -11,7 +11,10 @@ import { pdfBus } from './lib/pdfbus'
 import { normalizeBases, legacyLocalBases, clearLegacyLocalBases, type Base } from './lib/bases'
 import { dropFromScanCache, clearScanCache } from './lib/query'
 import { clearTodoCache } from './lib/todos'
+import { clearSearchCache, dropFromSearchCache } from './lib/search'
+import { clearSimilarCache } from './lib/similar'
 import { normalizeDoc } from './lib/canvas'
+import { escapeRegExp } from './lib/md'
 import {
   buildSupertagIndex,
   fieldsToFrontmatter,
@@ -53,7 +56,7 @@ export type HistEntry =
   | { kind: 'view'; view: ViewMode; baseId?: string | null; tag?: string | null; canvasPath?: string | null }
 
 /** Selectable editor fonts (the note-writing area). */
-/** Selectable UI themes: cool dark (default), warm dark ("paper"), and light. */
+/** Selectable UI themes: cool dark (default), warm light ("paper"), and cool light. */
 export type ThemeName = 'dark' | 'paper' | 'light'
 
 export const EDITOR_FONTS: { key: string; label: string; stack: string }[] = [
@@ -129,7 +132,20 @@ interface VersoState {
    *  path (same map identity, so per-keystroke cloning never happens) — subscribe
    *  to this tick, not the map, to react to text changes. */
   textsTick: number
+  /** True while the vault is still hydrating in the background. The app is fully
+   *  usable during this: the file tree, navigation and the open note are all live —
+   *  only vault-WIDE derivations (backlinks, search, graph, queries) are incomplete. */
+  vaultLoading: boolean
+  /** Notes hydrated so far / total, for the sidebar progress line. */
+  loadedCount: number
+  totalCount: number
   parsed: Record<string, ParsedNote>
+  /** What changed in `parsed` on the last update: the paths whose entries were
+   *  re-derived (adds, edits and deletes alike), or null when the whole map was
+   *  replaced (vault load/reload/rename). Consumers that only care about edits to
+   *  OTHER notes can check this list instead of diffing the map — the editor's
+   *  row-memo signal used to walk every parsed note twice per debounced rebuild. */
+  parsedChanges: { rev: number; paths: readonly string[] | null }
   index: VaultIndex
   /** Global navigation history for back/forward (main pane) — notes and view screens. */
   history: HistEntry[]
@@ -308,24 +324,13 @@ export function templatesFromFiles(files: NoteFile[]): TemplateFile[] {
 
 /** Wrap the first plain-text (not already-linked) occurrence of `name` in `line` with [[ ]]. */
 function wrapMention(line: string, name: string): string {
-  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(`(^|[^\\w[/])(${esc})(?![\\w\\]/])`, 'i')
+  const re = new RegExp(`(^|[^\\w[/])(${escapeRegExp(name)})(?![\\w\\]/])`, 'i')
   return line.replace(re, (_m, pre: string, nm: string) => `${pre}[[${nm}]]`)
 }
 
-async function loadAll(): Promise<{
-  texts: Record<string, string>
-  parsed: Record<string, ParsedNote>
-}> {
-  const contents = await window.verso.readAll()
-  const texts: Record<string, string> = {}
-  const parsed: Record<string, ParsedNote> = {}
-  for (const { path, text } of contents) {
-    texts[path] = text
-    parsed[path] = parseNote(path, text)
-  }
-  return { texts, parsed }
-}
+/** Notes read per round trip while hydrating. Large enough that the IPC overhead is
+ *  amortized, small enough that the renderer paints between batches. */
+const HYDRATE_CHUNK = 400
 
 /**
  * Load this workspace's saved Bases from `.verso/bases.json`. One-time migration:
@@ -348,6 +353,12 @@ export const useStore = create<VersoState>((set, get) => {
   // too heavy to run on every keystroke, so we debounce it. texts/parsed update
   // immediately; index consumers (backlinks, queries, graph) are eventually consistent.
   let indexTimer: ReturnType<typeof setTimeout> | null = null
+  // Monotonic revision behind `parsedChanges`; `null` paths means "assume all".
+  let parsedRev = 0
+  const changed = (paths: readonly string[] | null): { rev: number; paths: readonly string[] | null } => ({
+    rev: ++parsedRev,
+    paths
+  })
   // Paths whose text changed during typing but whose `parsed` entry hasn't been
   // re-derived yet — the parse is deferred to the debounce so each keystroke is O(1).
   const dirtyPaths = new Set<string>()
@@ -357,7 +368,8 @@ export const useStore = create<VersoState>((set, get) => {
       indexTimer = null
       const texts = get().texts
       let parsed = get().parsed
-      const changed: ParsedNote[] = []
+      const reparsed: ParsedNote[] = []
+      const touched = [...dirtyPaths]
       let removed = false
       if (dirtyPaths.size) {
         parsed = { ...parsed }
@@ -368,7 +380,7 @@ export const useStore = create<VersoState>((set, get) => {
           } else {
             const pn = parseNote(p, texts[p])
             parsed[p] = pn
-            changed.push(pn)
+            reparsed.push(pn)
           }
         }
         dirtyPaths.clear()
@@ -377,8 +389,12 @@ export const useStore = create<VersoState>((set, get) => {
       // in O(edited notes); anything else (new/removed note, alias change) falls
       // back to a full rebuild. `withContentChanges` returns null when it can't patch.
       const incremental =
-        !removed && changed.length ? get().index.withContentChanges(changed, texts) : null
-      set({ parsed, index: incremental ?? buildIndex(parsed, texts) })
+        !removed && reparsed.length ? get().index.withContentChanges(reparsed, texts) : null
+      set({
+        parsed,
+        parsedChanges: changed(touched),
+        index: incremental ?? buildIndex(parsed, texts)
+      })
     }, 200)
   }
   // Typing hot path: mutate just the changed note's text in place (cloning a 50k-key
@@ -398,7 +414,8 @@ export const useStore = create<VersoState>((set, get) => {
   const updateNoteState = (path: string, text: string): void => {
     set({
       texts: { ...get().texts, [path]: text },
-      parsed: { ...get().parsed, [path]: parseNote(path, text) }
+      parsed: { ...get().parsed, [path]: parseNote(path, text) },
+      parsedChanges: changed([path])
     })
     dirtyPaths.add(path)
     scheduleIndexRebuild()
@@ -464,9 +481,53 @@ export const useStore = create<VersoState>((set, get) => {
     flushTimer = setTimeout(() => void flushAll(), delay)
   }
 
+  // Bumped on every vault (re)load. A hydration pass captures its generation and
+  // stops the moment it goes stale, so switching vaults mid-load can't pour the old
+  // vault's notes into the new one's state.
+  let loadGen = 0
+
+  /**
+   * Read the rest of the vault in the background, chunk by chunk.
+   *
+   * `texts` and `parsed` are mutated IN PLACE here (the documented hot-path
+   * convention) rather than spread per chunk — copying a growing map once per batch
+   * is quadratic in the note count, which is exactly the wrong shape for the case
+   * this exists to fix. Consumers are driven by `textsTick`/`loadedCount` during the
+   * pass, then by one real index build at the end.
+   */
+  const hydrateVault = async (gen: number, paths: string[]): Promise<void> => {
+    for (let i = 0; i < paths.length; i += HYDRATE_CHUNK) {
+      if (gen !== loadGen) return // vault switched under us
+      const slice = paths.slice(i, i + HYDRATE_CHUNK)
+      const contents = await window.verso.readNotes(slice)
+      if (gen !== loadGen) return
+      const { texts, parsed } = get()
+      for (const { path, text } of contents) {
+        // Never clobber a note already in memory: it was either opened on demand
+        // (ensureLoaded) or edited while the rest of the vault streamed in.
+        if (texts[path] !== undefined) continue
+        texts[path] = text
+        parsed[path] = parseNote(path, text)
+      }
+      set({ texts, textsTick: get().textsTick + 1, loadedCount: Object.keys(texts).length })
+    }
+    if (gen !== loadGen) return
+    // One index build for the whole vault, once. Swapping `parsed` for a fresh object
+    // here is what tells identity-comparing consumers that the vault is complete.
+    const { texts, parsed } = get()
+    set({
+      parsed: { ...parsed },
+      parsedChanges: changed(null),
+      index: buildIndex(parsed, texts),
+      vaultLoading: false,
+      loadedCount: Object.keys(texts).length
+    })
+  }
+
   /** Load an opened workspace's notes + bases into state, resetting navigation. Shared
    *  by bootstrap / openWorkspace / switchVault so a vault swap always lands cleanly. */
   const applyWorkspace = async (ws: Workspace): Promise<void> => {
+    const gen = ++loadGen
     // Drop anything still queued for the previous vault: a buffered write or a
     // debounced index/flush that fired after the swap would land on the new vault.
     pending.clear()
@@ -478,15 +539,34 @@ export const useStore = create<VersoState>((set, get) => {
     resetSpell() // the new vault has its own spellcheck ignore list
     clearScanCache() // query scan cache entries belong to the previous vault
     clearTodoCache() // …and so do the cached per-note todo lists
-    const { texts, parsed } = await loadAll()
+    clearSearchCache() // …the cached searchable bodies
+    clearSimilarCache() // …and the TF-IDF term vectors
+
+    // Read ONLY the note we're about to show, then paint. The file tree comes from
+    // `ws.files` (already stat'd by the workspace open), so the vault is navigable
+    // immediately; everything else streams in behind this.
     const first = ws.files[0]?.path
+    const texts: Record<string, string> = {}
+    const parsed: Record<string, ParsedNote> = {}
+    if (first) {
+      const content = await window.verso.readNote(first)
+      if (content !== null) {
+        texts[first] = content.text
+        parsed[first] = parseNote(first, content.text)
+      }
+    }
+    if (gen !== loadGen) return
     set({
       workspace: ws,
       files: ws.files,
       texts,
       parsed,
+      parsedChanges: changed(null),
       index: buildIndex(parsed, texts),
       loading: false,
+      vaultLoading: ws.files.length > 1,
+      loadedCount: Object.keys(texts).length,
+      totalCount: ws.files.length,
       dirty: false,
       history: first ? [{ kind: 'note', path: first }] : [],
       histIndex: first ? 0 : -1,
@@ -494,11 +574,41 @@ export const useStore = create<VersoState>((set, get) => {
       activePath: first ?? null,
       view: 'editor'
     })
+
+    // Per-vault side data is small and independent of the note bodies — fetch it
+    // alongside the hydration rather than gating the first paint on it.
+    const rest = ws.files.map((f) => f.path).filter((p) => p !== first)
+    const hydrating = hydrateVault(gen, rest)
+
     const bases = await loadWorkspaceBases()
+    if (gen !== loadGen) return
     set({ bases, activeBaseId: bases[0]?.id ?? null })
     const canvases = await window.verso.listCanvases()
+    if (gen !== loadGen) return
     set({ canvases, activeCanvasPath: canvases[0]?.path ?? null })
     await get().reloadCustomCss()
+    await hydrating
+  }
+
+  /**
+   * Guarantee a note's text is in memory. During hydration a note the user clicks may
+   * not have been read yet — without this the editor would open it blank and then pop
+   * in seconds later.
+   */
+  const ensureLoaded = async (path: string): Promise<void> => {
+    if (get().texts[path] !== undefined) return
+    const content = await window.verso.readNote(path)
+    if (content === null) return
+    const texts = get().texts
+    if (texts[path] !== undefined) return // hydration or an edit beat us to it
+    texts[path] = content.text
+    set({
+      texts,
+      textsTick: get().textsTick + 1,
+      parsed: { ...get().parsed, [path]: parseNote(path, content.text) },
+      parsedChanges: changed([path]),
+      loadedCount: Object.keys(texts).length
+    })
   }
   /** True if `path` has an unsaved buffered edit (used to avoid watcher clobber). */
   const isPending = (path: string): boolean => pending.has(path)
@@ -506,6 +616,7 @@ export const useStore = create<VersoState>((set, get) => {
   /** Show a note in the main pane (no history record). */
   const activateNote = (path: string): void => {
     if (get().dirty) void flushAll()
+    void ensureLoaded(path) // may still be streaming in — don't open it blank
     set({ activePath: path, view: 'editor' })
   }
 
@@ -585,6 +696,7 @@ export const useStore = create<VersoState>((set, get) => {
   const restoreEntry = (entry: HistEntry): void => {
     if (get().dirty) void flushAll()
     if (entry.kind === 'note') {
+      void ensureLoaded(entry.path) // may still be streaming in — don't open it blank
       set({ activePath: entry.path, view: 'editor' })
     } else {
       set({
@@ -602,7 +714,11 @@ export const useStore = create<VersoState>((set, get) => {
     files: [],
     texts: {},
     textsTick: 0,
+    vaultLoading: false,
+    loadedCount: 0,
+    totalCount: 0,
     parsed: {},
+    parsedChanges: { rev: 0, paths: null },
     index: new VaultIndex([], {}),
     history: [],
     histIndex: -1,
@@ -964,18 +1080,40 @@ export const useStore = create<VersoState>((set, get) => {
       if (!ws) return
       const fresh = await window.verso.loadWorkspace(ws.root)
       if (!fresh) return
-      const { texts, parsed } = await loadAll()
+      const gen = ++loadGen
       const exists = (p: string | null | undefined): boolean => !!p && fresh.files.some((f) => f.path === p)
       const active = get().activePath
+      const keep = exists(active) ? active! : (fresh.files[0]?.path ?? null)
+      // Re-read from disk, keeping the user where they are. Same streaming shape as a
+      // fresh open: the note in front of them first, the rest behind it.
+      const texts: Record<string, string> = {}
+      const parsed: Record<string, ParsedNote> = {}
+      if (keep) {
+        const content = await window.verso.readNote(keep)
+        if (content !== null) {
+          texts[keep] = content.text
+          parsed[keep] = parseNote(keep, content.text)
+        }
+      }
+      if (gen !== loadGen) return
+      clearScanCache()
+      clearTodoCache()
+      clearSearchCache()
+      clearSimilarCache()
       set({
         workspace: fresh,
         files: fresh.files,
         texts,
         parsed,
+        parsedChanges: changed(null),
         index: buildIndex(parsed, texts),
-        activePath: exists(active) ? active : (fresh.files[0]?.path ?? null),
+        vaultLoading: fresh.files.length > 1,
+        loadedCount: Object.keys(texts).length,
+        totalCount: fresh.files.length,
+        activePath: keep,
         sidePanes: get().sidePanes.filter((sp) => sp.kind === 'pdf' || exists(sp.path))
       })
+      await hydrateVault(gen, fresh.files.map((f) => f.path).filter((p) => p !== keep))
     },
 
     openNote: (path) => {
@@ -994,6 +1132,7 @@ export const useStore = create<VersoState>((set, get) => {
     openInSidePane: (path) => {
       const panes = get().sidePanes
       if (panes.some((p) => p.kind === 'note' && p.path === path)) return // already open in a split
+      void ensureLoaded(path) // may still be streaming in — don't open it blank
       set({ sidePanes: [...panes, { kind: 'note', path }] })
     },
 
@@ -1205,6 +1344,7 @@ export const useStore = create<VersoState>((set, get) => {
 
       if (event.type === 'unlink') {
         dropFromScanCache(event.path)
+        dropFromSearchCache(event.path)
         // Merge onto the latest state (a functional update) so concurrent events
         // can't clobber each other.
         set((state) => {
@@ -1217,6 +1357,7 @@ export const useStore = create<VersoState>((set, get) => {
             files,
             texts,
             parsed,
+            parsedChanges: changed([event.path]),
             activePath: state.activePath === event.path ? (files[0]?.path ?? null) : state.activePath,
             sidePanes: state.sidePanes.filter((sp) => sp.path !== event.path),
             // Back must not resurrect the dead note (one keystroke would recreate it).
@@ -1234,6 +1375,7 @@ export const useStore = create<VersoState>((set, get) => {
       // open note / splits follow the file instead of resetting).
       if (event.type === 'rename') {
         dropFromScanCache(event.oldPath)
+        dropFromSearchCache(event.oldPath)
         // An unsaved buffer follows the file — and wins over what's on disk, so a
         // keystroke typed right around the move isn't clobbered by this event.
         if (pending.has(event.oldPath)) {
@@ -1261,6 +1403,7 @@ export const useStore = create<VersoState>((set, get) => {
             files,
             texts,
             parsed,
+            parsedChanges: changed([event.oldPath, event.path]),
             activePath:
               state.activePath === event.oldPath
                 ? moved
@@ -1306,7 +1449,7 @@ export const useStore = create<VersoState>((set, get) => {
         const incremental =
           event.type === 'change' && known ? state.index.withContentChanges([note], texts) : null
         deferredRebuild = !incremental
-        return { files, texts, parsed, index: incremental ?? state.index }
+        return { files, texts, parsed, parsedChanges: changed([file.path]), index: incremental ?? state.index }
       })
       if (deferredRebuild) {
         dirtyPaths.add(file.path)
@@ -1331,6 +1474,7 @@ export const useStore = create<VersoState>((set, get) => {
         return
       }
       dropFromScanCache(oldPath)
+      dropFromSearchCache(oldPath)
 
       try {
         // Snapshot AFTER the awaits above so keystrokes typed meanwhile are included.
@@ -1376,6 +1520,8 @@ export const useStore = create<VersoState>((set, get) => {
           return {
             texts,
             parsed,
+            // A rename rewrites links across arbitrarily many referrers.
+            parsedChanges: changed(null),
             files,
             index: buildIndex(parsed, texts),
             activePath: s.activePath === oldPath ? newPath : s.activePath,

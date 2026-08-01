@@ -23,7 +23,7 @@ function parseLinkBody(body: string): LinkRef {
 }
 
 export function parseNote(path: string, text: string): ParsedNote {
-  const { data, body, bodyLine } = parseFrontmatter(text)
+  const { data, body } = parseFrontmatter(text)
   const skip = codeRanges(body)
 
   // --- Wikilinks ---

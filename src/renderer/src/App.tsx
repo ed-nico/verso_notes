@@ -14,6 +14,7 @@ import { TableOfContents } from './components/TableOfContents'
 import { SimilarNotes } from './components/SimilarNotes'
 import { JournalView } from './components/JournalView'
 import { Calendar } from './components/Calendar'
+import { OnThisDay } from './components/OnThisDay'
 import { HistoryPanel } from './components/HistoryPanel'
 import { TodosView } from './components/TodosView'
 import { TendView } from './components/TendView'
@@ -291,6 +292,7 @@ function RightSidebar(): React.JSX.Element {
   return (
     <aside className="rightbar">
       <Calendar onPick={(iso) => void ensureDailyNote(iso).then(openNote)} />
+      {view === 'journal' && <OnThisDay />}
       {view === 'editor' && activePath && (
         <>
           <div className="rightbar-title">Properties</div>
@@ -369,9 +371,10 @@ export function App(): React.JSX.Element {
 
   // Accent theme: override the palette's accent variables on the root element,
   // using the variant tuned for the active theme (dark hues wash out on white).
+  // Both `light` and `paper` are light themes — only `dark` takes the dark hues.
   useEffect(() => {
     const a = ACCENTS.find((x) => x.key === accent) ?? ACCENTS[0]
-    const vars = theme === 'light' ? a.light : a.dark
+    const vars = theme === 'dark' ? a.dark : a.light
     const root = document.documentElement
     root.style.setProperty('--accent', vars.accent)
     root.style.setProperty('--accent-dim', vars.accentDim)

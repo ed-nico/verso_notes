@@ -1,0 +1,582 @@
+/*
+ * Full-screen views: graph, database, assets, bases.
+ *
+ * Part of the stylesheet split out of the former single styles.css.
+ * ORDER MATTERS: these files are imported in sequence by styles.css and later
+ * rules (notably the light-theme overrides) depend on appearing after earlier
+ * ones. Move a rule between files only if it stays in the same relative order.
+ */
+/* ---------- Graph view ---------- */
+.graph-wrap {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+  position: relative;
+}
+/* Graph display/filter/force controls — floating panel, top-right. */
+.graph-controls {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.graph-search {
+  width: 210px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 10px;
+  outline: none;
+}
+.graph-search:focus {
+  border-color: var(--accent);
+}
+.graph-controls-toggle {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 5px 10px;
+}
+.graph-controls-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.graph-panel {
+  width: 210px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  box-shadow: var(--shadow-md);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.graph-panel-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  margin-top: 4px;
+}
+.graph-panel-group:first-child {
+  margin-top: 0;
+}
+.graph-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+}
+.graph-opt.col {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+.graph-opt.col span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.graph-opt input[type='range'] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.graph-opt input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+.graph-panel-foot {
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Database view ---------- */
+.db-view {
+  padding: 24px 32px;
+}
+
+/* Inline {{base …}} embed — a read-only slice of a base inside a note. */
+.base-embed {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-panel);
+}
+.base-embed .db-view {
+  padding: 0;
+  overflow-x: auto;
+}
+.base-embed .db-view th {
+  position: static;
+}
+.base-embed-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.base-embed-name {
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+}
+.base-embed-name:hover {
+  text-decoration: underline;
+}
+.base-embed-sub {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.base-embed-missing {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.base-embed-link {
+  color: var(--accent);
+  cursor: pointer;
+}
+.base-embed-link:hover {
+  text-decoration: underline;
+}
+
+.db-view table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.db-view th,
+.db-view td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.db-view th {
+  color: var(--text-dim);
+  font-weight: 600;
+  user-select: none;
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+}
+.db-view th.sortable {
+  cursor: pointer;
+}
+.db-view th.sortable:hover {
+  color: var(--text);
+}
+.db-view tr:hover td {
+  background: var(--bg-hover);
+}
+.db-view td.title {
+  color: var(--link);
+  cursor: pointer;
+}
+/* Inline-editable frontmatter cells in the interactive Bases table. */
+.db-cell-edit {
+  cursor: text;
+  min-height: 1em;
+  border-radius: 4px;
+  margin: -2px -4px;
+  padding: 2px 4px;
+}
+.db-view tr:hover .db-cell-edit {
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.db-cell-check {
+  cursor: pointer;
+  user-select: none;
+}
+.db-cell-input {
+  width: 100%;
+  min-width: 80px;
+  box-sizing: border-box;
+  background: var(--bg);
+  border: 1px solid var(--accent-dim);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 3px 5px;
+  font: inherit;
+  outline: none;
+}
+.db-view .pill {
+  display: inline-block;
+  background: var(--bg-elevated);
+  color: var(--tag);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 11px;
+  margin-right: 4px;
+}
+.db-view .db-empty {
+  color: var(--text-faint);
+}
+.base-thumb {
+  height: 34px;
+  max-width: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.db-view {
+  padding: 0 32px 32px;
+}
+
+/* ---------- Assets ---------- */
+.assets {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 24px 32px 48px;
+}
+.assets-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.assets-head h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.assets-count {
+  color: var(--text-dim);
+  font-size: 13px;
+  flex: 1;
+}
+.assets-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.assets-table th,
+.assets-table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.assets-table th {
+  color: var(--text-dim);
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+.assets-table th:hover {
+  color: var(--text);
+}
+.assets-table tr:hover td {
+  background: var(--bg-hover);
+}
+.asset-thumb-cell {
+  width: 56px;
+}
+.asset-thumb {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.asset-ext-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.asset-name {
+  color: var(--link);
+  cursor: pointer;
+  font-weight: 500;
+}
+.asset-name:hover {
+  text-decoration: underline;
+}
+.asset-dim {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.asset-ref {
+  display: inline-block;
+  color: var(--link);
+  cursor: pointer;
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  padding: 1px 8px;
+  margin: 1px 4px 1px 0;
+  font-size: 12px;
+}
+.asset-ref:hover {
+  text-decoration: underline;
+}
+.asset-orphan {
+  color: var(--text-faint);
+  font-style: italic;
+}
+.asset-orphan-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.asset-del {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 8px;
+}
+.asset-del:hover {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+/* ---------- Bases ---------- */
+.bases {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 20px 0 40px;
+}
+.bases-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 32px 14px;
+  flex-wrap: wrap;
+}
+.bases-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.base-tab {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.base-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.base-tab.active {
+  background: var(--accent-dim);
+  color: white;
+  border-color: transparent;
+}
+.base-tab.base-new {
+  padding: 5px 10px;
+}
+.bases-actions {
+  display: flex;
+  gap: 6px;
+}
+.btn-sm {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-sm:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.btn-sm.danger:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.bases-empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 60px 32px;
+}
+.bases-empty p {
+  margin-bottom: 16px;
+}
+.base-config {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  margin: 0 32px 18px;
+  padding: 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.base-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-dim);
+  /* Grow to share the row so the controls fill the width instead of hugging the left. */
+  flex: 1 1 160px;
+}
+.base-field > span {
+  font-weight: 600;
+}
+.base-field .prop-input {
+  min-width: 0;
+  width: 100%;
+}
+/* Columns and Filters get their own full-width row. */
+.base-cols-field,
+.base-filters {
+  flex-basis: 100%;
+}
+.base-cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  max-width: none;
+}
+.base-col-opt {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 400;
+}
+.base-filters {
+  width: 100%;
+}
+.base-filter-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.base-filter-row .prop-input {
+  min-width: 0;
+  flex: 1;
+}
+.base-filter-row .prop-del {
+  opacity: 0.6;
+}
+.base-filter-row .prop-del:hover {
+  opacity: 1;
+}
+
+/* Gallery layout */
+.base-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px;
+  padding: 4px 32px 8px;
+}
+.gallery-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-panel);
+  transition: border-color 0.1s, transform 0.1s;
+}
+.gallery-card:hover {
+  border-color: var(--accent-dim);
+  transform: translateY(-2px);
+}
+.gallery-cover {
+  aspect-ratio: 3 / 4;
+  background: var(--bg-elevated);
+}
+.gallery-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.gallery-noimg {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+.gallery-title {
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px 2px;
+}
+.gallery-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+  padding: 0 10px 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gallery-meta:last-child {
+  padding-bottom: 10px;
+}
+.gallery-meta .base-thumb {
+  height: 24px;
+}
+
+/* Sidebar saved-base sub-items */
+.nav-caret {
+  font-size: 9px;
+  color: var(--text-faint);
+  margin-right: 2px;
+}
+.nav-subitem {
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--text-dim);
+  padding: 4px 10px 4px 26px;
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-subitem:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.nav-subitem.active {
+  color: var(--accent);
+}

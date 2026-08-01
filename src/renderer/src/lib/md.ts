@@ -46,3 +46,12 @@ export function codeRanges(text: string): Array<[number, number]> {
 export function inRanges(pos: number, ranges: Array<[number, number]>): boolean {
   return ranges.some(([s, e]) => pos >= s && pos < e)
 }
+
+/**
+ * Escape a literal string for embedding in a RegExp. Note names, search queries
+ * and spellcheck words are all user data that routinely contains `.`, `(`, `+`
+ * and friends — every place that builds a regex from them needs this.
+ */
+export function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

@@ -266,3 +266,140 @@ describe('block-level backlink context (Reflect round)', () => {
     expect(ctx).toContain('…')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Incremental patching: the shared-state contract of withContentChanges, and the
+// combined-scan rewrite of unlinkedReferences.
+// ---------------------------------------------------------------------------
+
+describe('withContentChanges: shared-state contract', () => {
+  it('returns a fresh handle so subscribers see a changed identity', () => {
+    const files = { 'A.md': 'hello', 'B.md': 'x' }
+    const idx = index(files)
+    files['A.md'] = 'hello [[B]]'
+    const next = idx.withContentChanges([parseNote('A.md', files['A.md'])], files)
+    expect(next).not.toBeNull()
+    expect(next).not.toBe(idx)
+  })
+
+  it('bumps the version on both handles, since they share state', () => {
+    const files = { 'A.md': 'hello', 'B.md': 'x' }
+    const idx = index(files)
+    expect(idx.version).toBe(0)
+    files['A.md'] = 'hello [[B]]'
+    const next = idx.withContentChanges([parseNote('A.md', files['A.md'])], files)!
+    expect(next.version).toBe(1)
+    expect(idx.version).toBe(1) // superseded, not preserved
+  })
+
+  it('leaves no cache that one handle refreshes and the other does not', () => {
+    // The old implementation cloned FIRST and then mutated a mix of `this` and the
+    // clone, so the previous handle kept a stale unlinked-reference memo while
+    // everything else about it had moved on. Both handles must now agree.
+    const files: Record<string, string> = { 'Alpha.md': 'x', 'B.md': 'nothing here' }
+    const idx = index(files)
+    expect(idx.unlinkedReferences('Alpha.md')).toHaveLength(0) // populates the memo
+
+    files['B.md'] = 'now mentions Alpha in prose'
+    const next = idx.withContentChanges([parseNote('B.md', files['B.md'])], files)!
+
+    expect(next.unlinkedReferences('Alpha.md')).toHaveLength(1)
+    expect(idx.unlinkedReferences('Alpha.md')).toHaveLength(1)
+  })
+
+  it('patches backlinks for an edited note without a full rebuild', () => {
+    const files: Record<string, string> = { 'A.md': 'plain', 'B.md': 'x' }
+    const idx = index(files)
+    expect(idx.backlinkCount('B.md')).toBe(0)
+    files['A.md'] = 'now links [[B]]'
+    const next = idx.withContentChanges([parseNote('A.md', files['A.md'])], files)!
+    expect(next.backlinkCount('B.md')).toBe(1)
+  })
+
+  it('drops backlinks when an edit removes the link', () => {
+    const files: Record<string, string> = { 'A.md': 'links [[B]]', 'B.md': 'x' }
+    const idx = index(files)
+    expect(idx.backlinkCount('B.md')).toBe(1)
+    files['A.md'] = 'link removed'
+    const next = idx.withContentChanges([parseNote('A.md', files['A.md'])], files)!
+    expect(next.backlinkCount('B.md')).toBe(0)
+    expect(next.backlinksFor('B.md')).toHaveLength(0)
+  })
+
+  it('refuses to patch an unknown path (the file set changed)', () => {
+    const files: Record<string, string> = { 'A.md': 'x' }
+    const idx = index(files)
+    files['New.md'] = 'brand new'
+    expect(idx.withContentChanges([parseNote('New.md', files['New.md'])], files)).toBeNull()
+  })
+
+  it('refuses to patch when aliases changed (resolution may shift vault-wide)', () => {
+    const files: Record<string, string> = { 'A.md': 'x', 'B.md': 'y' }
+    const idx = index(files)
+    files['A.md'] = '---\naliases: [Ay]\n---\nx'
+    expect(idx.withContentChanges([parseNote('A.md', files['A.md'])], files)).toBeNull()
+  })
+
+  it('re-scans only the edited note for mentions, keeping other sources intact', () => {
+    const files: Record<string, string> = {
+      'Alpha.md': 'target',
+      'B.md': 'B talks about Alpha',
+      'C.md': 'C talks about Alpha'
+    }
+    const idx = index(files)
+    expect(idx.unlinkedReferences('Alpha.md').map((r) => r.sourcePath).sort()).toEqual(['B.md', 'C.md'])
+
+    files['B.md'] = 'B no longer says the word'
+    const next = idx.withContentChanges([parseNote('B.md', files['B.md'])], files)!
+    expect(next.unlinkedReferences('Alpha.md').map((r) => r.sourcePath)).toEqual(['C.md'])
+  })
+})
+
+describe('unlinkedReferences: combined scan', () => {
+  it('finds mentions of several different notes in one source', () => {
+    const idx = index({
+      'Alpha.md': 'a',
+      'Beta.md': 'b',
+      'Notes.md': 'Discussed Alpha and Beta today.'
+    })
+    expect(idx.unlinkedReferences('Alpha.md').map((r) => r.sourcePath)).toEqual(['Notes.md'])
+    expect(idx.unlinkedReferences('Beta.md').map((r) => r.sourcePath)).toEqual(['Notes.md'])
+  })
+
+  it('matches back-to-back mentions (the boundary is a lookahead, not a consumed char)', () => {
+    const idx = index({ 'Alpha.md': 'a', 'Beta.md': 'b', 'N.md': 'Alpha Beta' })
+    expect(idx.unlinkedReferences('Alpha.md')).toHaveLength(1)
+    expect(idx.unlinkedReferences('Beta.md')).toHaveLength(1)
+  })
+
+  it('prefers the longest name when one is a suffix of another', () => {
+    const idx = index({ 'Work.md': 'w', 'Deep Work.md': 'd', 'N.md': 'I do Deep Work daily' })
+    expect(idx.unlinkedReferences('Deep Work.md')).toHaveLength(1)
+    expect(idx.unlinkedReferences('Work.md')).toHaveLength(0)
+  })
+
+  it('emits one row per line even when a name repeats on it', () => {
+    const idx = index({ 'Alpha.md': 'a', 'N.md': 'Alpha and Alpha again' })
+    expect(idx.unlinkedReferences('Alpha.md')).toHaveLength(1)
+  })
+
+  it('reports every note sharing a duplicated basename', () => {
+    const idx = index({ 'One/Dup.md': 'x', 'Two/Dup.md': 'y', 'N.md': 'mentions Dup here' })
+    expect(idx.unlinkedReferences('One/Dup.md')).toHaveLength(1)
+    expect(idx.unlinkedReferences('Two/Dup.md')).toHaveLength(1)
+  })
+
+  it('never reports a note mentioning its own name', () => {
+    const idx = index({ 'Alpha.md': 'Alpha is the subject of Alpha' })
+    expect(idx.unlinkedReferences('Alpha.md')).toHaveLength(0)
+  })
+
+  it('returns [] for a path that is not a note', () => {
+    expect(index({ 'A.md': 'x' }).unlinkedReferences('Nope.md')).toEqual([])
+  })
+
+  it('survives a note whose name contains regex metacharacters', () => {
+    const idx = index({ 'C++ (notes).md': 'x', 'N.md': 'read C++ (notes) today' })
+    expect(idx.unlinkedReferences('C++ (notes).md')).toHaveLength(1)
+  })
+})

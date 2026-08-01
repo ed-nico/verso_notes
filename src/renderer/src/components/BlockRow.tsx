@@ -127,7 +127,12 @@ export const BlockRow = React.memo(function BlockRow({
           'bl-row bl-' +
           b.type +
           (b.type === 'heading' ? ' is-heading' : '') +
-          (selected ? ' selected' : '')
+          (selected ? ' selected' : '') +
+          // Let the browser skip layout/paint for offscreen rows (see .bl-cv).
+          // NEVER on the row being edited: content-visibility brings paint
+          // containment, which would clip the `[[`/`/` autocomplete popup that
+          // hangs below the editing block.
+          (isEditing ? '' : ' bl-cv')
         }
         data-block-id={b.id}
         style={{ paddingLeft: depth * 24 }}

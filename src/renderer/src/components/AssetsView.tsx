@@ -17,7 +17,10 @@ function fmtDate(ms: number): string {
 }
 
 export function AssetsView(): React.JSX.Element {
-  const texts = useStore((s) => s.texts)
+  // `texts` is mutated IN PLACE on the typing hot path, so subscribing to the map
+  // itself would never fire — this view would keep showing "unused" for an asset
+  // you just referenced. Subscribe to the tick and read the map imperatively.
+  const textsTick = useStore((s) => s.textsTick)
   const files = useStore((s) => s.files)
   const openNote = useStore((s) => s.openNote)
   const openPdf = useStore((s) => s.openPdf)
@@ -37,7 +40,7 @@ export function AssetsView(): React.JSX.Element {
   // form too, or a used asset would show "unused" WITH a delete button.
   const refsByAsset = useMemo(() => {
     const map = new Map<string, string[]>()
-    const entries = Object.entries(texts)
+    const entries = Object.entries(useStore.getState().texts)
     for (const a of assets) {
       const encPath = a.path.split('/').map(encodeURIComponent).join('/')
       const encName = encodeURIComponent(a.name)
@@ -48,7 +51,11 @@ export function AssetsView(): React.JSX.Element {
       map.set(a.path, hits)
     }
     return map
-  }, [assets, texts])
+    // `textsTick` looks unused because the map is read imperatively — it IS the
+    // dependency: `texts` mutates in place, so the tick is the only thing that
+    // changes when a note's body does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assets, textsTick])
 
   const sorted = useMemo(() => {
     const copy = [...assets]

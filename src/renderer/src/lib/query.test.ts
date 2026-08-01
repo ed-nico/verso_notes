@@ -246,3 +246,139 @@ describe('date atom validation', () => {
     expect(idx.query('before:2026-08-01')).toHaveLength(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Grammar v3 directives: sort: / group: / limit: / as:
+// ---------------------------------------------------------------------------
+
+/** A small multi-note vault for exercising result shaping. */
+function shapedIndex(): VaultIndex {
+  const files: Record<string, string> = {
+    // Journal days give blocks a date without any frontmatter.
+    'Daily/2026/07/2026-07-01.md': '- [ ] alpha #work\n- [x] bravo #work',
+    'Daily/2026/07/2026-07-03.md': '- [ ] charlie #home',
+    'Zeta.md': '- delta #work\n- echo'
+  }
+  return new VaultIndex(
+    Object.entries(files).map(([p, t]) => parseNote(p, t)),
+    files
+  )
+}
+
+describe('directive parsing', () => {
+  it('parses sort/group/limit/as and keeps them out of the AND groups', () => {
+    const spec = parseQuery('#work sort:-date group:note limit:5 as:table')
+    expect(spec.groups).toHaveLength(1)
+    expect(spec.groups[0].atoms.map((a) => a.kind)).toEqual(['tag'])
+    expect(spec.sort).toEqual({ key: 'date', dir: 'desc' })
+    expect(spec.groupBy).toBe('note')
+    expect(spec.limit).toBe(5)
+    expect(spec.layout).toBe('table')
+  })
+
+  it('defaults to list layout and no shaping', () => {
+    const spec = parseQuery('#work')
+    expect(spec.layout).toBe('list')
+    expect(spec.sort).toBeUndefined()
+    expect(spec.groupBy).toBeUndefined()
+    expect(spec.limit).toBeUndefined()
+  })
+
+  it('degrades an unknown directive value to a plain word term', () => {
+    const spec = parseQuery('sort:nonsense')
+    expect(spec.sort).toBeUndefined()
+    expect(spec.groups[0].atoms.map((a) => a.kind)).toEqual(['term'])
+    expect(spec.empty).toBe(false)
+  })
+
+  it('rejects a non-positive or non-numeric limit', () => {
+    expect(parseQuery('limit:0').limit).toBeUndefined()
+    expect(parseQuery('limit:-4').limit).toBeUndefined()
+    expect(parseQuery('limit:abc').limit).toBeUndefined()
+    expect(parseQuery('limit:2.9').limit).toBe(2) // floored
+  })
+
+  it('does not treat directives alone as criteria', () => {
+    expect(parseQuery('limit:5 sort:date as:table').empty).toBe(true)
+    expect(shapedIndex().query('limit:5')).toEqual([])
+  })
+})
+
+describe('sort:', () => {
+  it('orders ascending by date and reverses with a - prefix', () => {
+    const idx = shapedIndex()
+    const asc = idx.query('#work sort:date').map((b) => b.text)
+    const desc = idx.query('#work sort:-date').map((b) => b.text)
+    // `text` keeps inline tags — clean() only strips list/task/heading markers.
+    expect(asc.slice(0, 2)).toEqual(['alpha #work', 'bravo #work'])
+    expect(desc[desc.length - 1]).toBe('delta #work') // undated sinks either way
+    expect(asc[asc.length - 1]).toBe('delta #work')
+  })
+
+  it('keeps blocks missing the sort key at the bottom in both directions', () => {
+    const idx = shapedIndex()
+    for (const q of ['sort:date #work', 'sort:-date #work']) {
+      const rows = idx.query(q)
+      expect(rows[rows.length - 1].date).toBeUndefined()
+    }
+  })
+
+  it('sorts open tasks before done ones under sort:status', () => {
+    const rows = shapedIndex().query('#work sort:status')
+    expect(rows[0].checked).toBe(false)
+    expect(rows.filter((b) => b.isTask).at(-1)!.checked).toBe(true)
+  })
+
+  it('sorts by note name and by block text', () => {
+    expect(shapedIndex().query('#work sort:name')[0].name).toBe('2026-07-01')
+    expect(shapedIndex().query('#work sort:text').map((b) => b.text)).toEqual([
+      'alpha #work',
+      'bravo #work',
+      'delta #work'
+    ])
+  })
+})
+
+describe('limit:', () => {
+  it('caps the result list and reports the pre-limit total', () => {
+    const res = shapedIndex().runQuery('#work limit:2')
+    expect(res.blocks).toHaveLength(2)
+    expect(res.total).toBe(3)
+  })
+
+  it('applies after sorting, so limit:1 keeps the true first row', () => {
+    expect(shapedIndex().query('#work sort:-text limit:1')[0].text).toBe('delta #work')
+  })
+})
+
+describe('group:', () => {
+  it('buckets by source note in first-appearance order', () => {
+    const res = shapedIndex().runQuery('#work group:note sort:text')
+    expect(res.groups!.map((g) => g.label)).toEqual(['2026-07-01', 'Zeta'])
+    expect(res.groups![0].blocks.map((b) => b.text)).toEqual(['alpha #work', 'bravo #work'])
+  })
+
+  it('lists a multi-tag block under each of its tags', () => {
+    const files = { 'A.md': '- both #x #y' }
+    const idx = new VaultIndex([parseNote('A.md', files['A.md'])], files)
+    const res = idx.runQuery('both group:tag')
+    expect(res.groups!.map((g) => g.label).sort()).toEqual(['#x', '#y'])
+    expect(res.groups!.every((g) => g.blocks.length === 1)).toBe(true)
+  })
+
+  it('buckets tasks by status and labels non-tasks separately', () => {
+    const res = shapedIndex().runQuery('#work group:status')
+    expect(res.groups!.map((g) => g.label).sort()).toEqual(['Done', 'Notes', 'To do'])
+  })
+
+  it('groups after limiting, so groups only describe what is shown', () => {
+    const res = shapedIndex().runQuery('#work sort:text limit:1 group:note')
+    expect(res.groups).toHaveLength(1)
+    expect(res.groups![0].label).toBe('2026-07-01')
+    expect(res.total).toBe(3)
+  })
+
+  it('returns null groups when no group: directive was given', () => {
+    expect(shapedIndex().runQuery('#work').groups).toBeNull()
+  })
+})

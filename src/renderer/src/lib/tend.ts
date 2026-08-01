@@ -5,8 +5,9 @@
  * index-backed resolver + backlink counts so this stays testable.
  */
 import type { NoteFile, ParsedNote } from '@shared/types'
+import { FILE_LINK_RE } from '@shared/media'
 import { parseFrontmatter } from './frontmatter'
-import { codeRanges, inRanges } from './md'
+import { codeRanges, escapeRegExp, inRanges } from './md'
 import { basename } from './links'
 import { noteStats } from './stats'
 
@@ -40,8 +41,6 @@ export interface TendReport {
  *  journal day still counts as a mention *source*. */
 const SKIP_DIRS = /^(Templates|Tags)\//
 const JOURNAL_DIR = /^Daily\//
-/** Link targets that are files, not notes (mirrors vault.ts's embed filter). */
-const FILE_LINK_RE = /\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|m4a|pdf|canvas)$/i
 /** Names shorter than this are too ambiguous to suggest linking ("A", "Go"). */
 const MIN_NAME_LEN = 3
 const STUB_WORDS = 20
@@ -128,7 +127,7 @@ function suggestConnections(
   }
   if (byName.size === 0) return []
   const alternation = [...byName.values()]
-    .map((f) => f.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .map((f) => escapeRegExp(f.name))
     .sort((a, b) => b.length - a.length) // longest first, so "Deep Work" beats "Work"
     .join('|')
   // Boundaries as in unlinkedReferences: no word/tag/link chars on either side.

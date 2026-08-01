@@ -51,6 +51,9 @@ export function TodosView(): React.JSX.Element {
     const someday = open.filter((t) => !t.date)
     const done = all.filter((t) => t.checked)
     return { overdueG, backlogG, todayG, upcoming, someday, done }
+    // `index` is the intended trigger, not an unused dep — see JournalView: `texts`
+    // mutates in place, so the index identity is what marks a settled rebuild.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [index, today])
 
   const upcomingCount = upcoming.reduce((n, g) => n + g.todos.length, 0)
