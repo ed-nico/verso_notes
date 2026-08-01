@@ -5,7 +5,7 @@
  * moves it. Serializes to clean Markdown (nested bullets via indentation).
  */
 
-type BlockType = 'paragraph' | 'heading' | 'bullet' | 'task' | 'code' | 'table'
+type BlockType = 'paragraph' | 'heading' | 'bullet' | 'task' | 'code' | 'quote' | 'table'
 
 export interface Block {
   id: number
@@ -48,6 +48,8 @@ const HEADING_RE = /^(#{1,6})\s+(.*)$/
 const FENCE_RE = /^(```|~~~)(.*)$/
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
 const TASK_RE = /^\[([ xX])\]\s+(.*)$/
+/** A blockquote line: `> text`, or a bare `>` for a blank line inside the quote. */
+const QUOTE_RE = /^\s{0,3}>(?: ?(.*))?$/
 
 interface ParsedDoc {
   blocks: Block[]
@@ -154,6 +156,25 @@ export function parseBlocks(text: string): ParsedDoc {
       continue
     }
 
+    // Blockquote: consecutive `>` lines fold into ONE block whose text is the
+    // quote content with the markers stripped. Callouts (`> [!note] Title`) are
+    // just a quote whose first line matches — see lib/callouts.ts. Keeping the
+    // whole thing in `text` is what makes the round trip free: nothing about a
+    // callout lives on the Block, so nothing can be dropped on save.
+    const quote = line.match(QUOTE_RE)
+    if (quote) {
+      const body: string[] = [quote[1] ?? '']
+      i++
+      while (i < lines.length) {
+        const q = lines[i].match(QUOTE_RE)
+        if (!q) break
+        body.push(q[1] ?? '')
+        i++
+      }
+      push(makeBlock({ type: 'quote', text: body.join('\n') }))
+      continue
+    }
+
     const list = line.match(LIST_RE)
     if (list) {
       const want = indentUnits(list[1])
@@ -176,6 +197,7 @@ export function parseBlocks(text: string): ParsedDoc {
       !lines[i].match(HEADING_RE) &&
       !lines[i].match(LIST_RE) &&
       !lines[i].match(FENCE_RE) &&
+      !lines[i].match(QUOTE_RE) &&
       !lines[i].trim().startsWith('|')
     ) {
       para.push(lines[i])
@@ -214,6 +236,12 @@ function serializeBlock(b: Block, ordinal?: number): string {
     }
     case 'table':
       return b.text
+    case 'quote':
+      // A bare `>` for blank lines, so an empty line inside a quote doesn't end it.
+      return b.text
+        .split('\n')
+        .map((l) => (l === '' ? '>' : `> ${l}`))
+        .join('\n') + anchor
     case 'bullet':
     case 'task': {
       const pad = '  '.repeat(b.level)
@@ -400,6 +428,7 @@ export function detectShortcut(text: string): Shortcut | null {
   if ((m = text.match(/^(#{1,6})\s/))) return { patch: { type: 'heading', level: m[1].length }, strip: m[0].length }
   if ((m = text.match(/^\[([ xX]?)\]\s/)))
     return { patch: { type: 'task', checked: m[1].toLowerCase() === 'x' }, strip: m[0].length }
+  if (text.match(/^>\s/)) return { patch: { type: 'quote' }, strip: 2 }
   if (text.match(/^[-*+]\s/)) return { patch: { type: 'bullet' }, strip: 2 }
   if ((m = text.match(/^\d+[.)]\s/))) return { patch: { type: 'bullet', ordered: true }, strip: m[0].length }
   // ```          → code block; ```ts → code block tagged "ts". Fires on the trailing
@@ -422,3 +451,9 @@ export const TABLE_TEMPLATE = '| Column | Column |\n| --- | --- |\n|  |  |'
 
 /** Starter body for a `/mermaid` block — a diagram that renders as soon as it's inserted. */
 export const MERMAID_TEMPLATE = 'flowchart LR\n  A[Start] --> B[Finish]'
+
+/** `/callout` — a note callout awaiting its title (the `> ` marker is implicit in the type). */
+export const CALLOUT_TEMPLATE = '[!note] '
+
+/** `/math` — empty display math, caret between the delimiters. */
+export const MATH_TEMPLATE = '$$$$'

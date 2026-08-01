@@ -65,8 +65,10 @@ function themeVariables(p: Palette, dark: boolean): Record<string, string> {
     background: p.bg,
     fontFamily: p.fontUi,
     fontSize: '14px',
-    // Seeds: node fill / stroke / label colour.
-    primaryColor: p.bgElevated,
+    // Seeds: node fill / stroke / label colour. Node fill is bgPanel, NOT
+    // bgElevated — the row's `.bl-code` frame around the diagram is already
+    // bgElevated, so matching it would leave nodes readable only by their border.
+    primaryColor: p.bgPanel,
     primaryTextColor: p.text,
     primaryBorderColor: p.accent,
     secondaryColor: p.bgHover,
@@ -78,7 +80,7 @@ function themeVariables(p: Palette, dark: boolean): Record<string, string> {
     // Edges and free-standing text.
     lineColor: p.textDim,
     textColor: p.text,
-    mainBkg: p.bgElevated,
+    mainBkg: p.bgPanel,
     nodeBorder: p.accent,
     nodeTextColor: p.text,
     titleColor: p.text,

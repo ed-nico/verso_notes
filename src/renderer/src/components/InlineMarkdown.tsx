@@ -4,6 +4,8 @@ import { assetUrl } from '../lib/assets'
 import { openLinkTarget } from '../lib/openLink'
 import { spellStatus } from '../lib/spell'
 import { hoverLink, unhoverLink } from './LinkPreview'
+import { MathSpan } from './Math'
+import { MATH_INLINE_SRC } from '../lib/math'
 
 interface RenderOpts {
   isResolved: (raw: string) => boolean
@@ -83,9 +85,19 @@ function ResizableImage({
 
 const WORD_TOKEN_RE = /[A-Za-z][A-Za-z']*/g
 
-// ![alt](src) | [text](url) | [[wikilink]] | `code` | **bold** | *italic* | _italic_ | #tag | bare URL | ~~strike~~ | ==highlight==
-const MD_RE =
-  /!\[([^\]\n]*)\]\(([^)\n]+)\)|\[([^\]\n]+?)\]\(([^)\n]+)\)|\[\[([^\]\n]+?)\]\]|(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\*[^*\n]+?\*)|(?<![A-Za-z0-9])_([^_\n]+?)_(?![A-Za-z0-9])|(?<=^|\s)#([\p{L}\d_][\p{L}\d_/-]*)|(https?:\/\/[^\s<>]+)|(~~[^~\n]+?~~)|(==[^=\n]+?==)/gu
+// ![alt](src) | [text](url) | [[wikilink]] | `code` | **bold** | *italic* | _italic_ | #tag | bare URL | ~~strike~~ | ==highlight== | $math$
+//
+// $math$ is LAST on purpose: `code` earlier in the alternation wins, so `$x$`
+// inside backticks stays literal. The delimiter rules keep prose safe — no space
+// just inside either `$`, and no digit just after the closer — so "costs $5 and
+// $10" can't be read as math while "$E = mc^2$" can.
+const MD_RE = new RegExp(
+  /!\[([^\]\n]*)\]\(([^)\n]+)\)|\[([^\]\n]+?)\]\(([^)\n]+)\)|\[\[([^\]\n]+?)\]\]|(`[^`\n]+`)|(\*\*[^*\n]+?\*\*)|(\*[^*\n]+?\*)|(?<![A-Za-z0-9])_([^_\n]+?)_(?![A-Za-z0-9])|(?<=^|\s)#([\p{L}\d_][\p{L}\d_/-]*)|(https?:\/\/[^\s<>]+)|(~~[^~\n]+?~~)|(==[^=\n]+?==)/u
+    .source +
+    '|' +
+    MATH_INLINE_SRC,
+  'gu'
+)
 
 /** Render inline Markdown of a single block to React nodes (recurses for nesting). */
 export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] {
@@ -332,6 +344,9 @@ export function renderInline(text: string, opts: RenderOpts): React.ReactNode[] 
           {renderInline(m[13].slice(2, -2), opts)}
         </mark>
       )
+    } else if (m[14] !== undefined) {
+      // Inline math — the group is the TeX itself, without the `$` delimiters.
+      nodes.push(<MathSpan key={key++} tex={m[14]} />)
     }
     last = m.index + m[0].length
   }

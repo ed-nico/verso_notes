@@ -262,6 +262,23 @@ html[data-theme='paper'] {
   --shadow-lg: 0 6px 16px rgba(58, 44, 26, 0.1), 0 24px 52px rgba(58, 44, 26, 0.17);
 }
 
+/* Paper grain — a tiling fractal-noise tile at very low contrast, so the writing
+   surface has the tooth of stock rather than reading as flat cream.
+   Deliberately on .scroll-area (the writing surface) and NOT as a full-window
+   overlay: an overlay would need a z-index that either sits under the panels or
+   over the modals, and would texture the chrome, which should stay clean.
+   A data: URI keeps it inside `img-src 'self' data:` — no file to ship.
+
+   The grain's strength lives in the tile's own `opacity`, not in a CSS blend:
+   background-image can't be faded from CSS, and `background-blend-mode` over
+   full-strength noise darkens the page rather than texturing it. `saturate 0`
+   keeps feTurbulence's colour speckle out — grain should be tooth, not confetti. */
+html[data-theme='paper'] .scroll-area {
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.055'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+}
+
 /* ---------- Nav (back/forward) buttons ---------- */
 .nav-btns {
   -webkit-app-region: no-drag;

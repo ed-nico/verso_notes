@@ -446,7 +446,12 @@ mark.tok-mark {
   margin-top: 0;
 }
 /* Headings: coloured + bold, modestly larger than body per level (h4+ stay body-size).
-   .ol-input and .ol-rendered must always share a size — the caret overlay depends on it. */
+   .ol-input and .ol-rendered must always share a size — the caret overlay depends on it.
+
+   De-emphasis down the scale is a COLOUR ramp, not opacity: each level mixes the
+   heading hue further toward body text, so an h4 reads as strong body text rather
+   than as faded orange. Opacity would fade the glyphs toward the page instead,
+   which costs contrast on the light themes without ever changing the hue. */
 .ol-content.tok-heading .ol-input,
 .ol-content.tok-heading .ol-rendered {
   font-weight: 700;
@@ -460,31 +465,31 @@ mark.tok-mark {
 .ol-content.tok-h2 .ol-input,
 .ol-content.tok-h2 .ol-rendered {
   font-size: 1.1em;
-  opacity: 0.88;
+  color: color-mix(in srgb, var(--heading) 85%, var(--text));
 }
 .ol-content.tok-h3 .ol-input,
 .ol-content.tok-h3 .ol-rendered {
   font-size: 1.05em;
   font-weight: 600;
-  opacity: 0.78;
+  color: color-mix(in srgb, var(--heading) 58%, var(--text));
 }
 .ol-content.tok-h4 .ol-input,
 .ol-content.tok-h4 .ol-rendered {
   font-size: 1em;
   font-weight: 600;
-  opacity: 0.68;
+  color: color-mix(in srgb, var(--heading) 34%, var(--text));
 }
 .ol-content.tok-h5 .ol-input,
 .ol-content.tok-h5 .ol-rendered {
   font-size: 1em;
-  font-weight: 500;
-  opacity: 0.62;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--heading) 16%, var(--text-dim));
 }
 .ol-content.tok-h6 .ol-input,
 .ol-content.tok-h6 .ol-rendered {
   font-size: 1em;
   font-weight: 500;
-  opacity: 0.55;
+  color: var(--text-dim);
 }
 
 .bl-code {
@@ -559,6 +564,101 @@ mark.tok-mark {
   white-space: pre-wrap;
   color: var(--danger);
 }
+/* ---------- Blockquotes ----------
+   Styled on .ol-content, not the row: the row owns the fold arrow and the
+   depth padding, so a bar on it would sit outside the text column. Applies
+   while editing too, so the block doesn't jump when you click into it. */
+.bl-row.bl-quote .ol-content {
+  border-left: 3px solid var(--border);
+  padding-left: 14px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.bl-row.bl-quote .ol-content .tok-mark,
+.bl-row.bl-quote .ol-content code {
+  font-style: normal;
+}
+/* A callout is a quote underneath, but it draws its own frame — drop the quote
+   bar so the box doesn't sit inside a second, taller rule. */
+.bl-row.bl-quote .ol-content:has(.bl-callout) {
+  border-left: none;
+  padding-left: 0;
+  font-style: normal;
+  color: var(--text);
+}
+
+/* ---------- Callouts (`> [!note] Title`) ----------
+   Each kind sets one hue in --callout; everything else derives from it, so a
+   new kind in lib/callouts.ts needs a single line here (and inherits the
+   default accent hue until it gets one). */
+.bl-callout {
+  --callout: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--callout) 35%, transparent);
+  border-left: 3px solid var(--callout);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--callout) 10%, var(--bg-elevated));
+  padding: 10px 14px;
+  margin: 4px 0;
+  font-style: normal;
+  color: var(--text);
+}
+.bl-callout-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--callout);
+}
+.bl-callout-head.foldable {
+  cursor: pointer;
+}
+.bl-callout-icon {
+  font-size: 13px;
+  line-height: 1;
+}
+.bl-callout-caret {
+  margin-left: auto;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.bl-callout-body {
+  margin-top: 6px;
+  color: var(--text);
+}
+.bl-callout[data-callout='note'] { --callout: #6c8cff; }
+.bl-callout[data-callout='abstract'] { --callout: #4db6ac; }
+.bl-callout[data-callout='info'] { --callout: #4a9eda; }
+.bl-callout[data-callout='tip'] { --callout: #29b8a4; }
+.bl-callout[data-callout='success'] { --callout: #3fa663; }
+.bl-callout[data-callout='question'] { --callout: #c9922e; }
+.bl-callout[data-callout='warning'] { --callout: #d98324; }
+.bl-callout[data-callout='failure'] { --callout: #d1545b; }
+.bl-callout[data-callout='danger'] { --callout: #cf3f4a; }
+.bl-callout[data-callout='bug'] { --callout: #c0504d; }
+.bl-callout[data-callout='example'] { --callout: #9a72d0; }
+.bl-callout[data-callout='quote'] { --callout: var(--text-dim); }
+
+/* ---------- Math (KaTeX) ----------
+   .bl-math-raw is what shows while the KaTeX chunk loads — the source, so
+   unrendered math still reads as math instead of leaving a gap. */
+.bl-math.display {
+  margin: 6px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+.bl-math-raw {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--text-dim);
+}
+.bl-math-raw.block {
+  display: block;
+  margin: 6px 0;
+  text-align: center;
+  white-space: pre-wrap;
+}
+
 .bl-code-input {
   font-family: var(--font-mono) !important;
   font-size: 13px !important;

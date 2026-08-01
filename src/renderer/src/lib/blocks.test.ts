@@ -78,6 +78,33 @@ describe('parseBlocks / serializeBlocks round trip', () => {
     expect(roundTrip(text)).toBe(text)
   })
 
+  it('parses a `>` line as a quote block, not a paragraph', () => {
+    const { blocks } = parseBlocks('> a quote line\n')
+    expect(blocks[0].type).toBe('quote')
+    // The marker is stripped from the editable text — the type carries it.
+    expect(blocks[0].text).toBe('a quote line')
+  })
+
+  it('folds consecutive `>` lines into one quote, blank lines included', () => {
+    const text = '> first\n>\n> third\n'
+    const { blocks } = parseBlocks(text)
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].text).toBe('first\n\nthird')
+    expect(roundTrip(text)).toBe(text)
+  })
+
+  it('ends a paragraph at a quote instead of swallowing it', () => {
+    const { blocks } = parseBlocks('plain text\n> quoted\n')
+    expect(blocks.map((b) => b.type)).toEqual(['paragraph', 'quote'])
+  })
+
+  it('round-trips a callout, fold marker and all', () => {
+    const text = '> [!warning]- Careful\n> body line\n'
+    const { blocks } = parseBlocks(text)
+    expect(blocks[0].type).toBe('quote')
+    expect(roundTrip(text)).toBe(text)
+  })
+
   it('round-trips a combined fixture with frontmatter', () => {
     // NB: no blank line after the closing --- (the serializer never emits one).
     const text = [

@@ -738,7 +738,10 @@ export const useStore = create<VersoState>((set, get) => {
     theme: (localStorage.getItem('verso-theme') as ThemeName | null) ?? 'dark',
     accent: localStorage.getItem('verso-accent') ?? 'indigo',
     customCss: null,
-    editorFont: localStorage.getItem('verso-font') ?? 'sans',
+    // Same Paper-implies-Serif default as setTheme, applied on boot.
+    editorFont:
+      localStorage.getItem('verso-font') ??
+      (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
     dirty: false,
@@ -753,7 +756,13 @@ export const useStore = create<VersoState>((set, get) => {
 
     setTheme: (theme) => {
       localStorage.setItem('verso-theme', theme)
-      set({ theme })
+      // Paper implies Serif — but only as a DEFAULT. An explicit pick is recorded
+      // in localStorage (`setEditorFont` writes it), so its absence is what marks
+      // the font as still-default and therefore ours to suggest. Switching away
+      // hands the default back, so the pairing is never sticky.
+      const chosen = localStorage.getItem('verso-font')
+      const editorFont = chosen ?? (theme === 'paper' ? 'serif' : 'sans')
+      set({ theme, editorFont })
     },
 
     setAccent: (accent) => {

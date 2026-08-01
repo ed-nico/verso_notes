@@ -31,9 +31,13 @@ import { QueryView } from './QueryView'
 import { BaseEmbed } from './BaseView'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
 import { MermaidBlock } from './MermaidBlock'
+import { MathBlock } from './Math'
+import { Callout } from './Callout'
+import { parseCallout } from '../lib/callouts'
 import { TableEditor } from './TableEditor'
 import {
   type Block,
+  CALLOUT_TEMPLATE,
   childrenRange,
   cloneBlocks,
   detectShortcut,
@@ -41,6 +45,7 @@ import {
   indexOfBlock,
   isList,
   makeBlock,
+  MATH_TEMPLATE,
   MERMAID_TEMPLATE,
   moveUnit,
   parseBlocks,
@@ -72,6 +77,9 @@ const SLASH_COMMANDS: { cmd: string; label: string; icon: string }[] = [
   { cmd: 'bullet', label: 'Bullet list', icon: '•' },
   { cmd: 'numbered', label: 'Numbered list', icon: '1.' },
   { cmd: 'table', label: 'Table', icon: '▦' },
+  { cmd: 'quote', label: 'Quote', icon: '❝' },
+  { cmd: 'callout', label: 'Callout', icon: '⚑' },
+  { cmd: 'math', label: 'Math block', icon: '∑' },
   { cmd: 'mermaid', label: 'Mermaid diagram', icon: '◇' },
   { cmd: 'query', label: 'Query', icon: '{ }' },
   { cmd: 'base', label: 'Base (embed a saved view)', icon: '▦' }
@@ -1040,13 +1048,16 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
 
   /** Toolbar block-type toggles on the editing block: heading level, bullet, numbered, todo.
    *  Re-applying the block's current kind reverts it to a plain paragraph. */
-  const setBlockKind = (kind: 1 | 2 | 3 | 'bullet' | 'ordered' | 'task'): void => {
+  const setBlockKind = (kind: 1 | 2 | 3 | 'bullet' | 'ordered' | 'task' | 'quote'): void => {
     if (editingId == null) return
     const b = blocks.find((x) => x.id === editingId)
     if (!b || b.type === 'code' || b.type === 'table') return
     const caret: CaretPos = taRefs.current.get(editingId)?.selectionStart ?? 'end'
     const toParagraph: Partial<Block> = { type: 'paragraph', level: 0, ordered: undefined, checked: undefined }
-    if (kind === 'bullet' || kind === 'ordered' || kind === 'task') {
+    if (kind === 'quote') {
+      if (b.type === 'quote') patchById(b.id, toParagraph, caret)
+      else patchById(b.id, { type: 'quote', level: 0, ordered: undefined, checked: undefined }, caret)
+    } else if (kind === 'bullet' || kind === 'ordered' || kind === 'task') {
       const type = kind === 'ordered' ? 'bullet' : kind
       const ordered = kind === 'ordered' ? true : undefined
       const same = b.type === type && (type !== 'bullet' || !!b.ordered === !!ordered)
@@ -1387,6 +1398,10 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
         { type: 'code', lang: 'mermaid', text: MERMAID_TEMPLATE },
         MERMAID_TEMPLATE.length
       )
+    if (cmd === 'quote') return patchById(id, { type: 'quote', text: '' }, 0)
+    // Caret lands after `[!note] ` so the title is the first thing you type.
+    if (cmd === 'callout') return patchById(id, { type: 'quote', text: CALLOUT_TEMPLATE }, CALLOUT_TEMPLATE.length)
+    if (cmd === 'math') return patchById(id, { type: 'paragraph', text: MATH_TEMPLATE }, 2)
     if (cmd === 'query') return patchById(id, { text: '{{query }}' }, 8)
     if (cmd === 'base') return patchById(id, { text: '{{base }}' }, 7)
     if (cmd === 'todo') return patchById(id, { type: 'task', checked: false, text: '' }, 0)
@@ -1801,6 +1816,15 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     }
     // `---` / `***` / `___` on its own line → a horizontal rule.
     if (b.type === 'paragraph' && /^\s*([-*_])\1{2,}\s*$/.test(b.text)) return <hr className="bl-hr" />
+    // `$$ … $$` alone in a paragraph → display math. Handled here rather than as
+    // a Block type so it stays plain paragraph text on disk (as `---` does).
+    const display = b.type === 'paragraph' && b.text.trim().match(/^\$\$([\s\S]+?)\$\$$/)
+    if (display) return <MathBlock tex={display[1].trim()} />
+    // A blockquote — or, when its first line is `[!kind]`, a callout.
+    if (b.type === 'quote') {
+      const callout = parseCallout(b.text)
+      if (callout) return <Callout data={callout} renderLine={(l) => inlineOf(l, b.id)} />
+    }
     if (b.text.trim() === '') return <span className="ol-placeholder">&nbsp;</span>
     const body = b.text.split('\n').map((line, i) => (
       <span key={i}>
@@ -2086,6 +2110,14 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
           onClick={() => setBlockKind('task')}
         >
           ☐
+        </button>
+        <button
+          className={'fmt-btn' + (editBlock?.type === 'quote' ? ' on' : '')}
+          title="Quote"
+          disabled={!canFmt}
+          onClick={() => setBlockKind('quote')}
+        >
+          ❝
         </button>
       </div>
       {find && (

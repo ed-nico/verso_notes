@@ -150,15 +150,37 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
 - **`lib/blocks.ts`** — block model: parse/serialize markdown ↔ `Block[]`, indentation,
   shortcut detection, visible/foldable logic. The editor's data layer. Round-trips preserve
   `^block-anchor` markers (`Block.anchor`) and ordered-list numbering (`Block.ordinal`).
+  Consecutive `>` lines fold into ONE `quote` block with the markers stripped (a bare `>` is a
+  blank line inside it), so a callout's whole body is a single block.
 - **`components/MermaidBlock.tsx`** + **`lib/mermaid.ts`** — a ```` ```mermaid ```` fence
   renders as a diagram instead of code (dispatched from `renderRich`'s `code` branch on
   `Block.lang`). `renderMermaid` is the ONE seam to the engine: it lazy-imports `mermaid`,
   maps the app's CSS variables onto mermaid's `base` theme, and returns an SVG string — swap
   the renderer there and nothing else moves. Parse errors surface as the source plus the
   message; the row's own `.bl-code` frame supplies the chrome, so the block adds none.
+- **`components/Callout.tsx`** + **`lib/callouts.ts`** — a `quote` block whose first line is
+  `[!kind] Title` renders as an Obsidian-style callout. **Nothing about a callout is stored on
+  the `Block`** — `parseCallout` derives it from the quote's text on every render, which is why
+  it round-trips to disk as the plain Markdown blockquote it already is. Add a kind to
+  `CALLOUTS` plus one `--callout` line in `styles/editor.css` and it works everywhere quotes
+  render. Fold state is component-local: the `-` marker sets only the STARTING state, so
+  collapsing a callout never rewrites the note.
+- **`components/Math.tsx`** + **`lib/math.ts`** — `$…$` inline and `$$…$$` display LaTeX via
+  KaTeX, lazy-imported behind `renderMath` (same one-seam shape as `mermaid.ts`); the
+  stylesheet is imported *inside* the lazy module so the CSS and its ~60 web-font files land
+  in that chunk rather than at app start. **KaTeX is a direct dependency on purpose** even
+  though mermaid also pulls it in — a mermaid minor could drop or bump it and break math for
+  reasons nothing in `math.ts` would explain. `MATH_INLINE_SRC` is the `$…$` delimiter rule as
+  a regex *source fragment*, spliced into `InlineMarkdown`'s alternation and unit-tested in
+  `math.test.ts`; its guards are what keep "it costs $5 and $10" from rendering as math.
+  Display math is matched in `renderRich` off paragraph text (like `---` → `<hr>`) rather than
+  being a `BlockType`, so it stays plain text on disk.
 - **`components/InlineMarkdown.tsx`** (`renderInline`) — renders inline markdown (bold,
   links, tags) for non-focused blocks, backlinks, todos, and previews. Pass `noPreview` to
   suppress the ⌘-hover link preview (used inside the preview popup to avoid recursion).
+  `MD_RE` is one big alternation and **group numbers are positional** — append new syntax at
+  the END so existing `m[n]` branches don't shift. Order is also precedence: `` `code` ``
+  sits before math, so `` `$x$` `` stays literal.
 
 ### Parsing & indexing — `src/renderer/src/lib/`
 
