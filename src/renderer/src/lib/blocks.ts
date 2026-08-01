@@ -419,3 +419,6 @@ export function parseTable(text: string): { header: string[]; rows: string[][] }
 }
 
 export const TABLE_TEMPLATE = '| Column | Column |\n| --- | --- |\n|  |  |'
+
+/** Starter body for a `/mermaid` block — a diagram that renders as soon as it's inserted. */
+export const MERMAID_TEMPLATE = 'flowchart LR\n  A[Start] --> B[Finish]'

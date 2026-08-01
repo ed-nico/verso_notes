@@ -16,6 +16,7 @@
 - **✅ Todos** — write todos in any note; add a due date with `@2026-06-20`. A Todos view rolls them up into Overdue / Today / Upcoming.
 - **🗓 Daily journal** — a calendar and per-day notes, with an **On This Day** panel that surfaces entries from the same date in previous years.
 - **📄 PDF annotator** — open a PDF in a side pane, highlight text, and have each highlight flow back into your note as a linkable reference.
+- **📈 Mermaid diagrams** — a ```` ```mermaid ```` fence renders as a diagram, themed from your palette. Click it to edit the source; `/mermaid` starts a new one.
 - **🧩 Queries & templates** — `{{query …}}` blocks (`#tag`, `[[Page]]`, todo/done) and reusable note templates.
 - **📚 Multiple vaults** — open several folders and swap between them from the sidebar.
 - **🕸 Graph** — a force-directed graph of the whole vault, plus a compact local graph of the current note's neighbours.
