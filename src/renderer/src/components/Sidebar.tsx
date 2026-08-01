@@ -201,7 +201,7 @@ export function Sidebar(): React.JSX.Element {
       label: `▤ Tag all as ${s.name}`,
       onClick: () => void applySupertagToFolder(m.path, s.name)
     })),
-    { label: '✦ Create supertag from folder', onClick: () => void createSupertagFromFolder(m.path) }
+    { label: '✦ Create tag from folder', onClick: () => void createSupertagFromFolder(m.path) }
   ]
 
   const menuItems = (m: MenuState): MenuItem[] => {

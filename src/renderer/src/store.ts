@@ -215,7 +215,9 @@ interface VersoState {
   ensureEntity: (name: string, tag: string) => Promise<string>
   /** Create a new supertag definition note under `Tags/` and open it
    *  (pass `{ open: false }` to create in the background, e.g. from the `#` picker). */
-  createSupertag: (name: string, opts?: { open?: boolean }) => Promise<void>
+  /** Create (or find) a tag's definition note; returns its path so the caller can
+   *  immediately write a schema to it — that's how a plain tag gains its first field. */
+  createSupertag: (name: string, opts?: { open?: boolean }) => Promise<string | null>
   /** Write a supertag's field schema to its definition note. */
   setSupertagFields: (defPath: string, fields: FieldDef[]) => Promise<void>
   /** Apply `tag` to every note under `folder` (recursively). */
@@ -862,17 +864,18 @@ export const useStore = create<VersoState>((set, get) => {
     createSupertag: async (name, opts) => {
       const open = opts?.open !== false
       const clean = name.replace(/^#/, '').trim().replace(/[/\\]/g, '-')
-      if (!clean) return
+      if (!clean) return null
       const path = `${TAGS_DIR}/${clean}.md`
-      if (get().files.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
-        if (open) get().openNote(path)
-        return
+      const existing = get().files.find((f) => f.path.toLowerCase() === path.toLowerCase())
+      if (existing) {
+        if (open) get().openNote(existing.path)
+        return existing.path
       }
       const created = await window.verso.createNote(path, '---\nfields: {}\n---\n')
-      if (created) {
-        await get().applyFileEvent({ type: 'add', file: created })
-        if (open) get().openNote(created.path)
-      }
+      if (!created) return null
+      await get().applyFileEvent({ type: 'add', file: created })
+      if (open) get().openNote(created.path)
+      return created.path
     },
 
     setSupertagFields: async (defPath, fields) => {

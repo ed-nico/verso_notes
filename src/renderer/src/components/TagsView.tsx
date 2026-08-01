@@ -20,33 +20,56 @@ function fmtCell(v: unknown): string {
   return String(v)
 }
 
-/** Edit a supertag's own field schema (add/remove fields, change type, select options). */
-function SupertagEditor({ st, index }: { st: Supertag; index: Map<string, Supertag> }): React.JSX.Element {
+/**
+ * A tag's field schema. Shown for EVERY tag, not only ones that already have a
+ * definition note: adding the first field is what mints `Tags/<tag>.md`. That's
+ * the whole "one concept" bargain — a tag is a cheap gesture, and it only costs
+ * a file once you give it structure. `st` is undefined until then.
+ */
+function SchemaEditor({
+  tag,
+  st,
+  index
+}: {
+  tag: string
+  st: Supertag | undefined
+  index: Map<string, Supertag>
+}): React.JSX.Element {
   const setSupertagFields = useStore((s) => s.setSupertagFields)
+  const createSupertag = useStore((s) => s.createSupertag)
   const [name, setName] = useState('')
   const [type, setType] = useState<FieldType>('text')
 
-  const resolved = resolveFields(st.tag, index)
-  const ownNames = new Set(st.fields.map((f) => f.name))
+  const own = st?.fields ?? []
+  const resolved = st ? resolveFields(st.tag, index) : []
+  const ownNames = new Set(own.map((f) => f.name))
   const inherited = resolved.filter((f) => !ownNames.has(f.name))
 
-  const save = (fields: FieldDef[]): void => void setSupertagFields(st.path, fields)
+  const save = (fields: FieldDef[]): void => {
+    if (st) void setSupertagFields(st.path, fields)
+  }
   const addField = (): void => {
     const n = name.trim()
-    if (!n || st.fields.some((f) => f.name === n)) return
-    save([...st.fields, { name: n, type, options: type === 'select' ? [] : undefined }])
+    if (!n || own.some((f) => f.name === n)) return
+    const next = [...own, { name: n, type, options: type === 'select' ? [] : undefined }]
+    // No definition note yet → create it first, then write the schema to it.
+    const write = st
+      ? setSupertagFields(st.path, next)
+      : createSupertag(tag, { open: false }).then((path) => (path ? setSupertagFields(path, next) : undefined))
+    void write
     setName('')
     setType('text')
   }
   const updateField = (i: number, patch: Partial<FieldDef>): void =>
-    save(st.fields.map((f, k) => (k === i ? { ...f, ...patch } : f)))
-  const removeField = (i: number): void => save(st.fields.filter((_, k) => k !== i))
+    save(own.map((f, k) => (k === i ? { ...f, ...patch } : f)))
+  const removeField = (i: number): void => save(own.filter((_, k) => k !== i))
 
   return (
     <div className="st-editor">
       <div className="st-editor-head">
         Schema
-        {st.extends.length > 0 && <span className="st-extends">inherits {st.extends.join(', ')}</span>}
+        {st && st.extends.length > 0 && <span className="st-extends">inherits {st.extends.join(', ')}</span>}
+        {!st && <span className="st-extends">add a field to give this tag structure</span>}
       </div>
 
       {inherited.map((f) => (
@@ -57,7 +80,7 @@ function SupertagEditor({ st, index }: { st: Supertag; index: Map<string, Supert
         </div>
       ))}
 
-      {st.fields.map((f, i) => (
+      {own.map((f, i) => (
         <div className="st-field" key={f.name}>
           <span className="st-field-name">{f.name}</span>
           <select
@@ -158,7 +181,7 @@ export function TagsView(): React.JSX.Element {
         <h1>Tags</h1>
         {tags.length === 0 && (
           <p className="empty-note">
-            No tags yet — add #tags to your notes (or create a supertag below) and they'll gather here.
+            No tags yet — add #tags to your notes (or create one below) and they&rsquo;ll gather here.
           </p>
         )}
         <div className="tag-cloud">
@@ -179,7 +202,7 @@ export function TagsView(): React.JSX.Element {
             <input
               className="tag-new-input"
               autoFocus
-              placeholder="supertag name"
+              placeholder="tag name"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   // Stay on this page and select the new tag, so its schema editor is
@@ -193,13 +216,17 @@ export function TagsView(): React.JSX.Element {
               onBlur={() => setCreating(false)}
             />
           ) : (
-            <button className="tag-chip tag-new" onClick={() => setCreating(true)} title="Create a supertag (typed tag)">
-              ＋ Supertag
+            <button
+              className="tag-chip tag-new"
+              onClick={() => setCreating(true)}
+              title="Create a tag up front (you can add fields to it)"
+            >
+              ＋ New tag
             </button>
           )}
         </div>
 
-        {activeSupertag && <SupertagEditor st={activeSupertag} index={stIndex} />}
+        {activeTag && <SchemaEditor tag={activeTag} st={activeSupertag} index={stIndex} />}
 
         {activeTag && (
           <div className="tag-notes">

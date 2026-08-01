@@ -85,13 +85,14 @@ const SECTIONS: Section[] = [
     ]
   },
   {
-    title: 'Supertags (typed tags)',
+    title: 'Typed tags',
     rows: [
-      { k: '＋ Supertag', d: 'On the Tags page, create a supertag — a tag that defines a schema of fields. It is a note under Tags/.' },
-      { k: 'fields', d: 'Add fields (text, number, date, checkbox, list, link, select) on the supertag’s page; extends: inherits a parent supertag’s fields.' },
-      { k: 'Tilsa #person', d: 'Type a name then a supertag → the name becomes a typed entity (its own note, tagged). The #tag is consumed; a [[link]] stays.' },
+      { k: 'Schema', d: 'Any tag’s page can take fields (text, number, date, checkbox, list, link, select). Adding the first one turns it into a typed tag, stored as a note under Tags/. Tags with no fields cost nothing.' },
+      { k: '▤ badge', d: 'Marks a tag that has a schema. Typed tags sort first on the Tags page.' },
+      { k: 'extends', d: 'In a tag note’s frontmatter, inherits a parent tag’s fields.' },
+      { k: 'Tilsa #person', d: 'Type a name then a typed tag → the name becomes an entity (its own note, tagged). The #tag is consumed; a [[link]] stays.' },
       { k: 'click an entity', d: 'A typed entity shows a type badge; click it to expand & edit its fields inline. ⌘-click opens its page.' },
-      { k: 'tag page', d: 'A supertag’s page lists every instance in a table, one column per field.' }
+      { k: 'tag page', d: 'A typed tag’s page lists every instance in a table, one column per field.' }
     ]
   },
   {

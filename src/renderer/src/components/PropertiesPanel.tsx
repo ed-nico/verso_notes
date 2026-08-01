@@ -571,7 +571,7 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
               className="prop-input prop-tag-in"
               autoFocus
               list="prop-all-tags"
-              placeholder="tag or supertag…"
+              placeholder="tag…"
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   const v = e.currentTarget.value.trim()
@@ -604,7 +604,7 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
             f.type === 'select' || f.type === 'link' || f.type === 'url' ? 'text' : f.type
           return (
             <div className="prop-row is-field" key={'field:' + f.name}>
-              <span className="prop-key prop-key-field" title={`${f.name} · ${f.type} — from a supertag`}>
+              <span className="prop-key prop-key-field" title={`${f.name} · ${f.type} — from a tag's schema`}>
                 <PropIcon type={iconType} name={f.name} />
                 <span className="prop-key-name">{f.name.replace(/_/g, ' ')}</span>
               </span>

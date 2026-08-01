@@ -221,18 +221,36 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   embeds (`BaseEmbed`, read-only). Templates are derived live from the `Templates/` folder
   (`templatesFromFiles`) — there is no `listTemplates` IPC.
 
-### Supertags — `src/renderer/src/lib/supertags.ts`
+### Typed tags ("supertags") — `src/renderer/src/lib/supertags.ts`
 
-Tana-style typed tags. A **supertag** is a note under `Tags/` whose frontmatter declares a
-`fields:` schema (types: text/number/date/checkbox/list/link/select) and optional `extends:`
-parents. Any note carrying that tag (frontmatter `tags:`) is an **entity** exposing those
-fields. Authoring: typing `<name> #<supertag> ` in the editor auto-creates/links an entity note,
-applies the tag, and rewrites the line to `[[name]]` (the `#tag` is consumed) — handled in
+Tana-style typed tags. **There is ONE user-facing concept: a tag.** A tag with a schema is
+backed by a note under `Tags/` whose frontmatter declares `fields:` (types:
+text/number/date/checkbox/list/link/select) and optional `extends:` parents; a tag with no
+schema is backed by nothing at all. The code still calls the backed kind a *supertag* (the
+type, the store actions, this file) — that's an implementation word, deliberately **not** in
+the UI, which says "tag" and "Schema" throughout.
+
+- **The definition note is created lazily**, on the first field added from a tag's page
+  (`TagsView`'s `SchemaEditor` → `createSupertag` → `setSupertagFields`; `createSupertag`
+  returns the def path for exactly this). This is load-bearing: minting a file per `#tag`
+  would put a stub in the file tree, the graph, search and Tend for every casual `#idea`.
+  `SchemaEditor` therefore renders for EVERY active tag, with `st` undefined until promotion.
+- **The Tags page lists tags from two sources** — tags used by notes, and definition notes
+  (which do *not* tag themselves). Merging both is what makes a schema'd-but-unused tag
+  visible; forgetting it is a bug that has bitten once already. Typed tags sort first and
+  carry the `▤` badge.
+- `fields:`/`extends:` are schema, not user data: `isSupertagSchemaKey` hides them from the
+  Properties panel on `Tags/` notes only (an ordinary note may have a `fields` property, and
+  a nested map rendered as a generic row shows up as `[object Object]`).
+
+Any note carrying the tag (frontmatter `tags:`) is an **entity** exposing those fields.
+Authoring: typing `<name> #<tag> ` in the editor auto-creates/links an entity note, applies
+the tag, and rewrites the line to `[[name]]` (the `#tag` is consumed) — handled in
 `BlockEditor`'s `onChange`. A linked entity renders as a chip with a type badge
 (`InlineMarkdown` `cm-entity`); clicking expands `EntityCard` (edits write to the entity's
-frontmatter via the shared, exported `ValueEditor` in `PropertiesPanel`). A supertag's page
-(`TagsView`) edits its schema and lists all instances in a table. Store surface:
-`applySupertag` / `ensureEntity` / `createSupertag` / `setSupertagFields`.
+frontmatter via the shared, exported `ValueEditor` in `PropertiesPanel`). A typed tag's page
+lists all instances in a table, one column per field. Store surface: `applySupertag` /
+`ensureEntity` / `createSupertag` / `setSupertagFields`.
 
 ### Cross-component buses
 

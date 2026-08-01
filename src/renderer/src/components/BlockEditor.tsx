@@ -1302,7 +1302,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
       // Offer to mint a supertag for the typed name (also upgrades a plain tag).
       const name = state.query.trim()
       if (name && !supertagIndex.has(normTag(name))) {
-        rows.push({ key: '__new_st__', label: `New supertag “${name}”`, icon: '＋', createTag: name })
+        rows.push({ key: '__new_st__', label: `New tag “${name}”`, icon: '＋', createTag: name })
       }
       return rows
     }
@@ -2244,7 +2244,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
                 <input
                   className="tagpick-input"
                   autoFocus
-                  placeholder="supertag…"
+                  placeholder="tag…"
                   value={tagPick.query}
                   onChange={(e) => setTagPick({ ...tagPick, query: e.target.value, index: 0 })}
                   onKeyDown={(e) => {
@@ -2265,7 +2265,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
                 />
                 <div className="tagpick-list">
                   {items.length === 0 && (
-                    <div className="tagpick-empty">No matching supertag — create one on the Tags page.</div>
+                    <div className="tagpick-empty">No matching tag — create one on the Tags page.</div>
                   )}
                   {items.map((s, i) => (
                     <div
