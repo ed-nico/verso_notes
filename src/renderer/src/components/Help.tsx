@@ -119,9 +119,13 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'Queries — building blocks',
-    note: 'A live list of matching blocks, embedded in a note. Terms AND together.',
+    note: 'A live list embedded in a note: lines by default, whole notes on request. Terms AND together.',
     rows: [
-      { k: '/query', d: 'Insert a query (or type {{query …}}). Uppercase OR splits alternatives.' },
+      { k: '/query', d: 'Opens the visual builder — pick conditions, see the match count live, and it writes the query for you. The text stays editable.' },
+      { k: '⚙ edit', d: 'On any query block, reopens the builder on that query.' },
+      { k: 'scope:notes', d: 'Rows become whole NOTES instead of lines — matched on the note’s own tags/properties, so a note that is only frontmatter still matches.' },
+      { k: 'cols:a,b,c', d: 'Columns for scope:notes — any frontmatter key, plus name, tags, date, status, excerpt, path. No spaces around the commas.' },
+      { k: 'OR', d: 'Uppercase OR splits alternatives (hand-written only — the builder does AND).' },
       { k: '#tag', d: 'Carries that tag — inline or via the note’s tags: property. Hierarchical: #project also matches #project/alpha.' },
       { k: '[[Page]]', d: 'Links to that page.' },
       { k: 'todo / done', d: 'Incomplete / complete tasks (checkboxes stay tickable).' },
@@ -137,7 +141,9 @@ const SECTIONS: Section[] = [
       { k: 'sort:key', d: 'Order by date, name, path, text, line or status. Prefix - to reverse. Rows with nothing to sort by go last.' },
       { k: 'limit:N', d: 'Keep at most N. Applied after sorting, so “sort:-date limit:10” really is the ten most recent.' },
       { k: 'group:key', d: 'Bucket by note, tag, date or status.' },
-      { k: 'as:table', d: 'Render as a table instead of a list.' },
+      { k: 'as:table', d: 'Render as a table instead of a list. as:gallery gives cards (notes only).' },
+      { k: 'sort by property', d: 'Under scope:notes, sort: takes any property name — sort:-Year is newest first.' },
+      { k: '{{query #film scope:notes cols:name,Year sort:-Year}}', d: 'Every film as a table, newest first — the same job a Base does.' },
       { k: '{{query #project todo}}', d: 'Open tasks tagged #project.' },
       { k: '{{query #work OR #home}}', d: 'Blocks tagged either.' },
       { k: '{{query todo -#someday after:2026-01-01}}', d: 'Open tasks from this year, skipping #someday.' },
@@ -151,7 +157,7 @@ const SECTIONS: Section[] = [
     rows: [
       { k: '▤ Bases', d: 'Build a filtered table or gallery over your notes’ frontmatter — columns are properties.' },
       { k: '{{base Name}}', d: 'Embed a saved base read-only in any note. Add limit:N or layout:gallery.' },
-      { k: 'query vs base', d: 'A query finds BLOCKS by text/tag. A base tabulates NOTES by their properties. Reach for a base when you want columns.' }
+      { k: 'query vs base', d: 'A query with scope:notes now does what a Base does, written inline in a note. Bases remain the click-together builder for views you want to save and reuse across notes.' }
     ]
   },
   {

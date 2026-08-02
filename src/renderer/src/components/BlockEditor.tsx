@@ -28,6 +28,7 @@ import {
 } from '../lib/supertags'
 import { dateSuggestions, formatLong } from '../lib/dates'
 import { QueryView } from './QueryView'
+import { QueryBuilder } from './QueryBuilder'
 import { BaseEmbed } from './BaseView'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
 import { MermaidBlock } from './MermaidBlock'
@@ -81,8 +82,8 @@ const SLASH_COMMANDS: { cmd: string; label: string; icon: string }[] = [
   { cmd: 'callout', label: 'Callout', icon: '⚑' },
   { cmd: 'math', label: 'Math block', icon: '∑' },
   { cmd: 'mermaid', label: 'Mermaid diagram', icon: '◇' },
-  { cmd: 'query', label: 'Query', icon: '{ }' },
-  { cmd: 'base', label: 'Base (embed a saved view)', icon: '▦' }
+  { cmd: 'query', label: 'List — find notes or lines…', icon: '⌕' },
+  { cmd: 'base', label: 'Embed a saved Base view', icon: '▦' }
 ]
 
 /** Typing one of these while text is selected wraps the selection instead of replacing it. */
@@ -248,6 +249,8 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   )
   const [zoomId, setZoomId] = useState<number | null>(null)
   const [ac, setAc] = useState<AcState | null>(null)
+  /** Open query builder: which block it will write into, and its current query. */
+  const [qb, setQb] = useState<{ id: number; initial: string } | null>(null)
   // Block-level multi-selection (whole bullets, not text within one).
   const [selIds, setSelIds] = useState<Set<number>>(() => new Set())
   const pendingCaret = useRef<PendingCaret | null>(null)
@@ -1411,7 +1414,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     // Caret lands after `[!note] ` so the title is the first thing you type.
     if (cmd === 'callout') return patchById(id, { type: 'quote', text: CALLOUT_TEMPLATE }, CALLOUT_TEMPLATE.length)
     if (cmd === 'math') return patchById(id, { type: 'paragraph', text: MATH_TEMPLATE }, 2)
-    if (cmd === 'query') return patchById(id, { text: '{{query }}' }, 8)
+    if (cmd === 'query') return setQb({ id, initial: '' })
     if (cmd === 'base') return patchById(id, { text: '{{base }}' }, 7)
     if (cmd === 'todo') return patchById(id, { type: 'task', checked: false, text: '' }, 0)
     if (cmd === 'bullet') return patchById(id, { type: 'bullet', ordered: false, text: '' }, 0)
@@ -1776,7 +1779,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const renderRich = (b: Block, tableWidths?: number[]): React.ReactNode => {
     // `{{query ...}}` renders a live list of matching blocks.
     const queryM = b.type !== 'code' && b.text.match(/^\{\{query\s+([^}]+)\}\}\s*$/i)
-    if (queryM) return <QueryView raw={queryM[1].trim()} />
+    if (queryM) return <QueryView raw={queryM[1].trim()} onEdit={() => setQb({ id: b.id, initial: queryM[1].trim() })} />
     const baseM = b.type !== 'code' && b.text.match(/^\{\{base\s+([^}]+)\}\}\s*$/i)
     if (baseM) return <BaseEmbed raw={baseM[1].trim()} />
     // A block that's just a video URL (or `{{video <url>}}`) renders an in-app player.
@@ -2030,6 +2033,17 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const canFmt = editBlock !== null && editBlock.type !== 'code' && editBlock.type !== 'table'
 
   return (
+    <>
+    {qb && (
+      <QueryBuilder
+        initial={qb.initial}
+        onCancel={() => setQb(null)}
+        onApply={(query) => {
+          patchById(qb.id, { text: `{{query ${query}}}` }, 0)
+          setQb(null)
+        }}
+      />
+    )}
     <div
       className="outliner"
       ref={outlinerRef}
@@ -2297,5 +2311,6 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
           )
         })()}
     </div>
+    </>
   )
 }

@@ -201,13 +201,28 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   skips fenced/inline code via `md.ts`'s shared `codeRanges`).
 - **`frontmatter.ts`** — YAML frontmatter get/parse/replace, built on the `yaml` package's
   Document API so edits preserve comments, key order, and formatting of untouched keys.
-- **`query.ts`** — the `{{query ...}}` block query language, rendered by `QueryView`. Grammar
-  v3 (documented in the file header): AND within a group, uppercase `OR` between groups,
+- **`query.ts`** — the `{{query ...}}` query language, rendered by `QueryView`. Grammar
+  v4 (documented in the file header): AND within a group, uppercase `OR` between groups,
   `-` negation, hierarchical `#tag` (matches `#tag/sub`), `before:`/`after:` dates,
   `prop:key[=value]`, todo/done, `[[Page]]`, words — plus **directives** that shape rather
   than filter: `sort:key` (`-` prefix reverses; missing values always sink), `limit:N`
-  (after sorting), `group:key` (after limiting, first-appearance order), `as:table`.
-  `runQuery` returns the shaped `QueryResult`; `query` is the thin block-list wrapper.
+  (after sorting), `group:key` (after limiting, first-appearance order),
+  `as:list|table|gallery`, `scope:blocks|notes` and `cols:a,b,c`.
+  **`scope:notes` makes each row a NOTE**, matched by `matchNote` against the note's own
+  tags/links/props rather than by any of its blocks matching — a note whose content is
+  entirely frontmatter has no blocks at all, and those are exactly the notes such a query is
+  looking for. `sort:` is the one directive where an unknown key is NOT degraded to a word
+  term: it's read as a property name, so `sort:-Year` orders by frontmatter (degrading it
+  made the query silently search for the literal text "sort:-year").
+  `runQuery` returns the shaped `QueryResult` — `blocks` XOR `notes`.
+- **`components/QueryBuilder.tsx`** — the visual builder behind `/query` and the `⚙ edit`
+  button on a rendered query. It COMPOSES the query string and re-seeds itself from one
+  (`condsFrom`); the text stays the source of truth and remains hand-editable, so nothing the
+  builder can't model is lost — an `OR` query simply opens in text mode rather than being
+  silently flattened on save.
+- **`md.ts`'s `embedRanges`** — the spans of `{{query}}`/`{{base}}` blocks, skipped by
+  `parseNote` alongside code. Their `#tags` and `[[links]]` are search *criteria*, not
+  content: counting them made every query match the very note that contained it.
 - **`compile.ts`** — Compile mode: DFS-stitches a hub note + its wikilinked notes (reading
   order, cycle-safe, depth/count caps) into one linear document — headings demoted per depth,
   `^anchors` stripped, links optionally flattened. Rendered by `CompileView` (the `compile`

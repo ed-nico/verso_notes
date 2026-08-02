@@ -99,3 +99,21 @@ describe('contextForLink', () => {
     expect(contextForLink('no links here', 'Target').line).toBe(-1)
   })
 })
+
+describe('query blocks are criteria, not content', () => {
+  it('does not adopt #tags from a {{query}} block', () => {
+    const n = parseNote('Films.md', '# Films\n\n{{query #film scope:notes}}\n')
+    expect(n.tags).toEqual([])
+  })
+
+  it('does not manufacture a link from a [[Page]] criterion', () => {
+    const n = parseNote('Q.md', '{{query [[Project Alpha]] todo}}\n')
+    expect(n.links).toEqual([])
+  })
+
+  it('still reads real tags and links around the block', () => {
+    const n = parseNote('Q.md', 'About #cinema and [[Reviews]].\n\n{{query #film}}\n')
+    expect(n.tags).toEqual(['cinema'])
+    expect(n.links.map((l) => l.raw)).toEqual(['Reviews'])
+  })
+})

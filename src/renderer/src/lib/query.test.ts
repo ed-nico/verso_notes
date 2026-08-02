@@ -285,10 +285,23 @@ describe('directive parsing', () => {
   })
 
   it('degrades an unknown directive value to a plain word term', () => {
-    const spec = parseQuery('sort:nonsense')
-    expect(spec.sort).toBeUndefined()
+    const spec = parseQuery('group:nonsense')
+    expect(spec.groupBy).toBeUndefined()
     expect(spec.groups[0].atoms.map((a) => a.kind)).toEqual(['term'])
     expect(spec.empty).toBe(false)
+  })
+
+  // `sort:` is the exception: an unknown key is a PROPERTY name, which is how
+  // `sort:-Year` orders notes. Degrading it turned the directive into a search
+  // for the literal text "sort:-year", which silently returned the wrong rows.
+  it('keeps an unknown sort key as a property name, preserving its case', () => {
+    const spec = parseQuery('#film scope:notes sort:-Year')
+    expect(spec.sort).toEqual({ key: 'Year', dir: 'desc' })
+    expect(spec.groups[0].atoms.map((a) => a.kind)).toEqual(['tag'])
+  })
+
+  it('still lowercases the built-in sort keys', () => {
+    expect(parseQuery('sort:-DATE').sort).toEqual({ key: 'date', dir: 'desc' })
   })
 
   it('rejects a non-positive or non-numeric limit', () => {
@@ -380,5 +393,45 @@ describe('group:', () => {
 
   it('returns null groups when no group: directive was given', () => {
     expect(shapedIndex().runQuery('#work').groups).toBeNull()
+  })
+})
+
+describe('scope / cols / gallery (v4 directives)', () => {
+  it('defaults to block scope and a list', () => {
+    const s = parseQuery('#a')
+    expect(s.scope).toBe('blocks')
+    expect(s.layout).toBe('list')
+  })
+
+  it('scope:notes defaults to a table — a note row is its columns', () => {
+    const s = parseQuery('#a scope:notes')
+    expect(s.scope).toBe('notes')
+    expect(s.layout).toBe('table')
+  })
+
+  it('accepts singular scope:note and explicit blocks', () => {
+    expect(parseQuery('#a scope:note').scope).toBe('notes')
+    expect(parseQuery('#a scope:blocks').scope).toBe('blocks')
+  })
+
+  it('parses cols: and as:gallery', () => {
+    const s = parseQuery('#a scope:notes cols:name,Started,Ended as:gallery')
+    expect(s.cols).toEqual(['name', 'Started', 'Ended'])
+    expect(s.layout).toBe('gallery')
+  })
+
+  // The language is whitespace-tokenized, so a space ends the directive: the
+  // trailing names fall out as word terms and silently narrow the search.
+  it('cols: takes no spaces around the commas', () => {
+    const s = parseQuery('scope:notes cols:name, Started')
+    expect(s.cols).toEqual(['name'])
+    expect(s.groups[0].atoms.some((a) => a.kind === 'term' && a.value === 'started')).toBe(true)
+  })
+
+  // Same forgiving rule as the other directives: a typo narrows, never surprises.
+  it('degrades an unusable directive value to a word term', () => {
+    const s = parseQuery('scope:sideways')
+    expect(s.scope).toBe('blocks')
+    expect(s.groups[0].atoms[0]).toMatchObject({ kind: 'term', value: 'scope:sideways' })
   })
 })

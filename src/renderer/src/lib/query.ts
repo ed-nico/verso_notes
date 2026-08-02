@@ -1,7 +1,12 @@
 /**
- * The block query language for `{{query ...}}` blocks.
+ * The query language for `{{query ...}}` blocks.
  *
- * Grammar (v3):
+ * Rows are LINES by default and whole NOTES under `scope:notes` — the one
+ * language covers both, which is what a Base does (see components/BaseView).
+ * `components/QueryBuilder` composes this string by clicking; the text stays the
+ * source of truth, so anything hand-written keeps working.
+ *
+ * Grammar (v4):
  *   query      :=  (group | directive) ("OR" group)*
  *   group      :=  term+                        — terms within a group are ANDed
  *   term       :=  "-"? atom                    — a leading "-" negates the atom
@@ -22,9 +27,10 @@
  * DIRECTIVES shape the result set rather than filtering it. They may appear
  * anywhere in the query and are not part of any AND/OR group:
  *
- *   sort:key    — date | name | path | text | line | status
- *                 prefix the key with `-` to reverse: `sort:-date`.
- *                 Blocks missing the key sink to the bottom in BOTH directions,
+ *   sort:key    — date | name | path | text | line | status, or — under
+ *                 `scope:notes` — ANY frontmatter property (`sort:-Year`).
+ *                 Prefix the key with `-` to reverse: `sort:-date`.
+ *                 Rows missing the key sink to the bottom in BOTH directions,
  *                 so `sort:-date` means "newest first", not "undated first".
  *   group:key   — note | tag | date | status
  *                 Groups appear in the order their first block does, so `group:`
@@ -33,11 +39,21 @@
  *   limit:N     — keep at most N blocks. Applied AFTER sorting and BEFORE
  *                 grouping, so `sort:-date limit:10 group:note` means "the 10
  *                 most recent, arranged by note".
- *   as:layout   — list (default) | table
+ *   scope:kind  — blocks (default) | notes
+ *                 `scope:notes` makes each ROW A NOTE rather than a line, matched
+ *                 against the note's own tags/links/props — which is the only way
+ *                 a note whose content is purely frontmatter can ever match.
+ *   cols:a,b,c  — columns for `scope:notes`: any frontmatter key (matched
+ *                 case-insensitively) plus the pseudo-columns name, tags, date,
+ *                 status, excerpt, path. NO SPACES around the commas — the
+ *                 language is whitespace-tokenized, so a space ends the directive.
+ *   as:layout   — list (default for blocks) | table (default for notes) | gallery
  *
  * An unrecognized directive value degrades to a plain word term, matching how
  * `before:` handles an unparseable date — a typo narrows the search instead of
- * silently doing nothing surprising.
+ * silently doing nothing surprising. `sort:` is the ONE exception: an unknown
+ * key there is a property name, because degrading it made `sort:-Year` search
+ * for the literal text "sort:-year" and quietly return the wrong rows.
  */
 import { frontmatterTags, parseFrontmatter } from './frontmatter'
 import { isValidISO, parseLooseDate, dailyDateOf } from './dates'
@@ -63,9 +79,9 @@ export interface QueryBlock {
   props?: Record<string, unknown>
 }
 
-type AtomKind = 'tag' | 'link' | 'task' | 'date' | 'prop' | 'term'
+export type AtomKind = 'tag' | 'link' | 'task' | 'date' | 'prop' | 'term'
 
-interface Atom {
+export interface Atom {
   kind: AtomKind
   negated: boolean
   /** tag name / lowercased page / lowercased word (unused for task/date/prop). */
@@ -79,19 +95,38 @@ interface Atom {
   propValue?: string
 }
 
-interface QueryGroup {
+export interface QueryGroup {
   atoms: Atom[]
 }
 
-/** Keys `sort:` understands. */
-export type SortKey = 'date' | 'name' | 'path' | 'text' | 'line' | 'status'
+/** Keys `sort:` understands natively. Any OTHER key is read as a column name —
+ *  that's how `sort:-Year` orders notes by a frontmatter property. */
+export type SortKey = 'date' | 'name' | 'path' | 'text' | 'line' | 'status' | (string & {})
 const SORT_KEYS = new Set<string>(['date', 'name', 'path', 'text', 'line', 'status'])
 
 /** Keys `group:` understands. */
 export type GroupKey = 'note' | 'tag' | 'date' | 'status'
 const GROUP_KEYS = new Set<string>(['note', 'tag', 'date', 'status'])
 
-export type QueryLayout = 'list' | 'table'
+export type QueryLayout = 'list' | 'table' | 'gallery'
+
+/** What a row IS. Blocks (lines) by default; `scope:notes` makes rows whole notes. */
+export type QueryScope = 'blocks' | 'notes'
+
+/** One note row, for `scope:notes`. */
+export interface QueryNote {
+  path: string
+  name: string
+  date?: string
+  tags: string[]
+  /** Lowercased page names this note links to. */
+  links: string[]
+  props: Record<string, unknown>
+  excerpt: string
+  /** Open / total task counts in the note, for the `status` column and sort. */
+  todo: number
+  done: number
+}
 
 export interface QuerySpec {
   /** OR-groups; a block matches when EVERY atom of ANY group passes. */
@@ -107,22 +142,30 @@ export interface QuerySpec {
   limit?: number
   /** `as:` directive; defaults to 'list'. */
   layout: QueryLayout
+  /** `scope:` directive; defaults to 'blocks'. */
+  scope: QueryScope
+  /** `cols:` directive — frontmatter keys (plus the pseudo-columns `name`, `tags`,
+   *  `date`, `status`, `excerpt`) shown for `scope:notes`. */
+  cols?: string[]
 }
 
-/** One `group:`ed bucket of results. */
+/** One `group:`ed bucket of results. Carries whichever kind the scope produced. */
 export interface QueryGroupResult {
   label: string
   blocks: QueryBlock[]
+  notes?: QueryNote[]
 }
 
 /** Everything a renderer needs: the parsed directives plus the shaped results. */
 export interface QueryResult {
   spec: QuerySpec
-  /** Matching blocks, sorted and limited. */
+  /** Matching blocks, sorted and limited. Empty under `scope:notes`. */
   blocks: QueryBlock[]
+  /** Matching notes under `scope:notes`; null for block scope. */
+  notes: QueryNote[] | null
   /** Buckets when `group:` was given, else null. */
   groups: QueryGroupResult[] | null
-  /** How many blocks matched before `limit:` was applied. */
+  /** How many rows matched before `limit:` was applied. */
   total: number
 }
 
@@ -155,7 +198,16 @@ export function parseQuery(raw: string): QuerySpec {
   }
 
   const kept = groups.filter((g) => g.atoms.length > 0)
-  return { ...shape, groups: kept, empty: kept.length === 0, layout: shape.layout ?? 'list' }
+  const scope = shape.scope ?? 'blocks'
+  return {
+    ...shape,
+    groups: kept,
+    empty: kept.length === 0,
+    scope,
+    // Notes default to a table: a note row is a set of properties, and rendering
+    // it as a bare list throws away the columns that made it note-scoped.
+    layout: shape.layout ?? (scope === 'notes' ? 'table' : 'list')
+  }
 }
 
 /**
@@ -165,7 +217,7 @@ export function parseQuery(raw: string): QuerySpec {
  * behaviour as `before:` with an unparseable date).
  */
 function applyDirective(tok: string, shape: Partial<QuerySpec>): boolean {
-  const m = /^(sort|group|limit|as):(.+)$/i.exec(tok)
+  const m = /^(sort|group|limit|as|scope|cols):(.+)$/i.exec(tok)
   if (!m) return false
   const kind = m[1].toLowerCase()
   const raw = m[2]
@@ -178,15 +230,31 @@ function applyDirective(tok: string, shape: Partial<QuerySpec>): boolean {
   }
   if (kind === 'as') {
     const v = raw.toLowerCase()
-    if (v !== 'list' && v !== 'table') return false
+    if (v !== 'list' && v !== 'table' && v !== 'gallery') return false
     shape.layout = v
+    return true
+  }
+  if (kind === 'scope') {
+    const v = raw.toLowerCase()
+    // `note` reads better in a sentence than `notes`; accept both.
+    if (v !== 'notes' && v !== 'note' && v !== 'blocks' && v !== 'block') return false
+    shape.scope = v.startsWith('note') ? 'notes' : 'blocks'
+    return true
+  }
+  if (kind === 'cols') {
+    const cols = raw.split(',').map((c) => c.trim()).filter(Boolean)
+    if (!cols.length) return false
+    shape.cols = cols
     return true
   }
   if (kind === 'sort') {
     const desc = raw.startsWith('-')
-    const key = (desc ? raw.slice(1) : raw).toLowerCase()
-    if (!SORT_KEYS.has(key)) return false
-    shape.sort = { key: key as SortKey, dir: desc ? 'desc' : 'asc' }
+    const key = desc ? raw.slice(1) : raw
+    if (!key) return false
+    // Unlike the other directives an unknown key is NOT rejected: it's taken as a
+    // property name. Rejecting it turned `sort:-Year` into a word term, which
+    // silently searched for the literal text "sort:-year" instead of sorting.
+    shape.sort = { key: SORT_KEYS.has(key.toLowerCase()) ? key.toLowerCase() : key, dir: desc ? 'desc' : 'asc' }
     return true
   }
   const key = raw.toLowerCase()
@@ -378,10 +446,53 @@ export function matchBlock(b: QueryBlock, spec: QuerySpec): boolean {
   return spec.groups.some((g) => g.atoms.every((a) => matchAtom(b, a) !== a.negated))
 }
 
+/**
+ * The same atoms evaluated against a whole NOTE.
+ *
+ * This can't be derived from "any block matches": a note whose content lives
+ * entirely in frontmatter has no blocks at all, and those are exactly the notes
+ * a `scope:notes` query is usually looking for (a film note is four properties
+ * and nothing else). So tags/links/props are read from the note, `todo`/`done`
+ * ask whether the note contains such a task, and a bare word searches the note's
+ * name and body.
+ */
+function matchNoteAtom(n: QueryNote, body: string, a: Atom): boolean {
+  switch (a.kind) {
+    case 'tag':
+      return n.tags.some((t) => t === a.value || t.startsWith(a.value + '/'))
+    case 'link':
+      return n.links.includes(a.value)
+    case 'task':
+      return a.task === 'todo' ? n.todo > 0 : n.done > 0
+    case 'date': {
+      if (!n.date || !a.dateValue) return false
+      return a.dateOp === 'before' ? n.date < a.dateValue : n.date > a.dateValue
+    }
+    case 'prop': {
+      const key = Object.keys(n.props).find((k) => k.toLowerCase() === a.propKey)
+      if (key === undefined) return false
+      const v = n.props[key]
+      const present = v !== undefined && v !== null && v !== ''
+      if (a.propValue === undefined) return present
+      if (!present) return false
+      const values = Array.isArray(v) ? v : [v]
+      return values.some((x) => String(x).toLowerCase().includes(a.propValue!))
+    }
+    case 'term':
+      return n.name.toLowerCase().includes(a.value) || body.toLowerCase().includes(a.value)
+  }
+}
+
+export function matchNote(n: QueryNote, body: string, spec: QuerySpec): boolean {
+  if (spec.empty) return false
+  return spec.groups.some((g) => g.atoms.every((a) => matchNoteAtom(n, body, a) !== a.negated))
+}
+
 // ---- result shaping (sort / limit / group) ---------------------------------
 
 /** True when `b` has no usable value for `key` — those sink to the bottom. */
 function missingKey(key: SortKey, b: QueryBlock): boolean {
+  if (!SORT_KEYS.has(key)) return true // a property name means nothing to a block
   if (key === 'date') return !b.date
   if (key === 'status') return !b.isTask
   return false
@@ -402,6 +513,10 @@ function compareKey(key: SortKey, a: QueryBlock, b: QueryBlock): number {
     case 'status':
       // Open tasks first: the interesting end of a todo list.
       return Number(a.checked) - Number(b.checked)
+    default:
+      // A property name — meaningless for a block; missingKey already sent every
+      // row to the "missing" bucket, so this is unreachable in practice.
+      return 0
   }
 }
 
@@ -460,5 +575,87 @@ export function groupBlocks(blocks: QueryBlock[], spec: QuerySpec): QueryGroupRe
 export function shapeResults(matched: QueryBlock[], spec: QuerySpec): QueryResult {
   const sorted = sortBlocks(matched, spec)
   const blocks = spec.limit === undefined ? sorted : sorted.slice(0, spec.limit)
-  return { spec, blocks, groups: groupBlocks(blocks, spec), total: matched.length }
+  return { spec, blocks, notes: null, groups: groupBlocks(blocks, spec), total: matched.length }
+}
+
+/** The value shown in a `cols:` column — pseudo-columns first, then frontmatter. */
+export function noteColumn(n: QueryNote, col: string): unknown {
+  switch (col.toLowerCase()) {
+    case 'name':
+      return n.name
+    case 'tags':
+      return n.tags.map((t) => `#${t}`)
+    case 'date':
+      return n.date
+    case 'status':
+      return n.todo > 0 ? `${n.todo} open` : n.done > 0 ? 'Done' : ''
+    case 'excerpt':
+      return n.excerpt
+    case 'path':
+      return n.path
+    default: {
+      // Frontmatter keys are matched case-insensitively, so `cols:started` finds
+      // a `Started:` property — the capitalisation in a vault is rarely uniform.
+      const key = Object.keys(n.props).find((k) => k.toLowerCase() === col.toLowerCase())
+      return key === undefined ? undefined : n.props[key]
+    }
+  }
+}
+
+const NOTE_MISSING = (key: SortKey, n: QueryNote): boolean =>
+  key === 'date' ? !n.date : key === 'status' ? n.todo === 0 && n.done === 0 : false
+
+/** Sort/limit/group note rows. `sort:` also accepts any `cols:` key by name. */
+export function shapeNoteResults(matched: QueryNote[], spec: QuerySpec): QueryResult {
+  const sort = spec.sort
+  let sorted = matched
+  if (sort) {
+    const sign = sort.dir === 'desc' ? -1 : 1
+    const known = SORT_KEYS.has(sort.key)
+    sorted = [...matched].sort((a, b) => {
+      if (known) {
+        const am = NOTE_MISSING(sort.key, a)
+        const bm = NOTE_MISSING(sort.key, b)
+        if (am !== bm) return am ? 1 : -1
+      }
+      // An unknown sort key is read as a column name, so `sort:-Started` orders
+      // by that property rather than silently doing nothing.
+      const av = known ? noteColumn(a, sort.key) : noteColumn(a, sort.key)
+      const bv = known ? noteColumn(b, sort.key) : noteColumn(b, sort.key)
+      const ae = av === undefined || av === null || av === ''
+      const be = bv === undefined || bv === null || bv === ''
+      if (ae !== be) return ae ? 1 : -1 // empties last in both directions
+      if (!ae) {
+        const c = String(av).localeCompare(String(bv), undefined, { numeric: true })
+        if (c !== 0) return sign * c
+      }
+      return a.path.localeCompare(b.path)
+    })
+  }
+  const notes = spec.limit === undefined ? sorted : sorted.slice(0, spec.limit)
+
+  let groups: QueryGroupResult[] | null = null
+  if (spec.groupBy) {
+    const key = spec.groupBy
+    const buckets = new Map<string, QueryNote[]>()
+    for (const n of notes) {
+      const labels =
+        key === 'tag'
+          ? n.tags.length
+            ? n.tags.map((t) => `#${t}`)
+            : ['Untagged']
+          : key === 'date'
+            ? [n.date ?? 'No date']
+            : key === 'status'
+              ? [n.todo > 0 ? 'To do' : n.done > 0 ? 'Done' : 'Notes']
+              : [n.name]
+      for (const label of labels) {
+        const arr = buckets.get(label)
+        if (arr) arr.push(n)
+        else buckets.set(label, [n])
+      }
+    }
+    groups = [...buckets].map(([label, ns]) => ({ label, blocks: [], notes: ns }))
+  }
+  return { spec, blocks: [], notes, groups, total: matched.length }
 }

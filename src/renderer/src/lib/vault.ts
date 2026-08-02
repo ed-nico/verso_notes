@@ -1,15 +1,19 @@
 import type { LinkRef, ParsedNote } from '@shared/types'
 import { FILE_LINK_RE } from '@shared/media'
-import { parseFrontmatter } from './frontmatter'
-import { basename, stripMd } from './links'
+import { frontmatterTags, parseFrontmatter } from './frontmatter'
+import { dailyDateOf } from './dates'
+import { basename, parseTarget, stripMd } from './links'
 import { codeRanges, escapeRegExp, inRanges } from './md'
 import { contextBlockForLink } from './parse'
 import {
   matchBlock,
+  matchNote,
   parseQuery,
   scanBlocks,
+  shapeNoteResults,
   shapeResults,
   type QueryBlock,
+  type QueryNote,
   type QueryResult
 } from './query'
 
@@ -256,12 +260,48 @@ export class VaultIndex {
    *  `sort:` / `limit:` / `group:` directives. */
   runQuery(raw: string): QueryResult {
     const spec = parseQuery(raw)
-    if (spec.empty) return { spec, blocks: [], groups: null, total: 0 }
+    if (spec.empty) return { spec, blocks: [], notes: null, groups: null, total: 0 }
+    if (spec.scope === 'notes') {
+      const rows: QueryNote[] = []
+      for (const [path, note] of this.notesByPath) {
+        const row = this.noteRow(path, note)
+        if (matchNote(row, this.texts[path] ?? '', spec)) rows.push(row)
+      }
+      return shapeNoteResults(rows, spec)
+    }
     const out: QueryBlock[] = []
     for (const path of this.notesByPath.keys()) {
       for (const b of this.blocksFor(path)) if (matchBlock(b, spec)) out.push(b)
     }
     return shapeResults(out, spec)
+  }
+
+  /** A note as a query row. Tag/date/task facts are derived the same way the
+   *  block scanner derives them, so both scopes answer `#tag` and `todo` alike. */
+  private noteRow(path: string, note: ParsedNote): QueryNote {
+    const blocks = this.blocksFor(path)
+    let todo = 0
+    let done = 0
+    for (const b of blocks) {
+      if (!b.isTask) continue
+      if (b.checked) done++
+      else todo++
+    }
+    // Frontmatter tags count as the note's tags, not just inline ones — a note
+    // whose only content is frontmatter must still answer #film.
+    const tags = [...new Set([...note.tags, ...frontmatterTags(note.frontmatter)].map((t) => t.toLowerCase()))]
+    const fmDate = note.frontmatter.date
+    return {
+      path,
+      name: note.name,
+      date: dailyDateOf(path) ?? (typeof fmDate === 'string' ? fmDate : undefined),
+      tags,
+      links: note.links.map((l) => parseTarget(l.raw).page.toLowerCase()),
+      props: note.frontmatter,
+      excerpt: note.excerpt,
+      todo,
+      done
+    }
   }
 
   /** Just the shaped block list — the common case. */

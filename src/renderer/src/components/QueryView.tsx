@@ -2,10 +2,21 @@ import { useMemo } from 'react'
 import { useStore } from '../store'
 import { resolveTarget } from '../lib/links'
 import { renderInline } from './InlineMarkdown'
-import type { QueryBlock } from '../lib/query'
+import { noteColumn, type QueryBlock, type QueryNote } from '../lib/query'
+
+/** Default columns when a `scope:notes` query doesn't name any. */
+const DEFAULT_COLS = ['name', 'tags', 'date']
+
+/** Format a column value for a cell. */
+function cell(v: unknown): string {
+  if (v === undefined || v === null || v === '') return '—'
+  if (Array.isArray(v)) return v.length ? v.join(', ') : '—'
+  if (typeof v === 'boolean') return v ? '✓' : '—'
+  return String(v)
+}
 
 /** Live, read-only results for a `{{query ...}}` block. */
-export function QueryView({ raw }: { raw: string }): React.JSX.Element {
+export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void }): React.JSX.Element {
   const index = useStore((s) => s.index)
   const files = useStore((s) => s.files)
   const openNote = useStore((s) => s.openNote)
@@ -13,7 +24,8 @@ export function QueryView({ raw }: { raw: string }): React.JSX.Element {
   const toggleTask = useStore((s) => s.toggleTask)
 
   const result = useMemo(() => index.runQuery(raw), [index, raw])
-  const { spec, blocks, groups, total } = result
+  const { spec, blocks, notes, groups, total } = result
+  const cols = spec.cols?.length ? spec.cols : DEFAULT_COLS
 
   const isResolved = (r: string): boolean =>
     (resolveTarget(r, files.map((f) => f.path)) ?? index.resolvePath(r)) !== null
@@ -23,7 +35,61 @@ export function QueryView({ raw }: { raw: string }): React.JSX.Element {
 
   // "12" normally; "10 of 63" when a limit: is hiding some, so a truncated
   // result never passes for the whole answer.
-  const count = blocks.length < total ? `${blocks.length} of ${total}` : String(total)
+  const shownCount = notes ? notes.length : blocks.length
+  const count = shownCount < total ? `${shownCount} of ${total}` : String(total)
+
+  /** Note rows — a table of columns, or a gallery of cards. */
+  const renderNotes = (rows: QueryNote[]): React.JSX.Element =>
+    spec.layout === 'gallery' ? (
+      <div className="queryview-gallery">
+        {rows.map((n) => (
+          <button className="queryview-card" key={n.path} onClick={() => jump(n.path)} title={n.path}>
+            <span className="queryview-card-name">{n.name}</span>
+            {cols
+              .filter((c) => c.toLowerCase() !== 'name')
+              .map((c) => {
+                const v = noteColumn(n, c)
+                if (v === undefined || v === null || v === '') return null
+                return (
+                  <span className="queryview-card-field" key={c}>
+                    <span className="queryview-card-key">{c}</span>
+                    {cell(v)}
+                  </span>
+                )
+              })}
+          </button>
+        ))}
+      </div>
+    ) : (
+      <div className="queryview-tablewrap">
+        <table className="queryview-table">
+          <thead>
+            <tr>
+              {cols.map((c) => (
+                <th key={c}>{c.replace(/_/g, ' ')}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((n) => (
+              <tr key={n.path}>
+                {cols.map((c, i) => (
+                  <td key={c}>
+                    {i === 0 ? (
+                      <button className="queryview-src" onClick={() => jump(n.path)} title={n.path}>
+                        {cell(noteColumn(n, c))}
+                      </button>
+                    ) : (
+                      cell(noteColumn(n, c))
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )
 
   const renderRows = (rows: QueryBlock[]): React.JSX.Element =>
     spec.layout === 'table' ? (
@@ -89,20 +155,39 @@ export function QueryView({ raw }: { raw: string }): React.JSX.Element {
   return (
     <div className="queryview">
       <div className="queryview-head">
-        query <code>{raw}</code> · {count}
+        {onEdit ? (
+          // Editing the raw text still works — this just means you never have to.
+          <button
+            className="queryview-edit"
+            title="Edit this query"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={onEdit}
+          >
+            ⚙ edit
+          </button>
+        ) : (
+          'query '
+        )}
+        <code>{raw}</code> · {count}
       </div>
-      {blocks.length === 0 && <div className="queryview-empty">No matching blocks</div>}
+      {total === 0 && (
+        <div className="queryview-empty">
+          {spec.scope === 'notes' ? 'No matching notes' : 'No matching blocks'}
+        </div>
+      )}
       {groups
         ? groups.map((g) => (
             <div className="queryview-group" key={g.label}>
               <div className="queryview-grouphead">
                 {g.label}
-                <span className="queryview-groupcount">{g.blocks.length}</span>
+                <span className="queryview-groupcount">{(g.notes ?? g.blocks).length}</span>
               </div>
-              {renderRows(g.blocks)}
+              {g.notes ? renderNotes(g.notes) : renderRows(g.blocks)}
             </div>
           ))
-        : renderRows(blocks)}
+        : notes
+          ? renderNotes(notes)
+          : renderRows(blocks)}
     </div>
   )
 }

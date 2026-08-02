@@ -1,7 +1,7 @@
 import type { LinkRef, ParsedNote } from '@shared/types'
 import { frontmatterAliases, frontmatterTags, isSystemProp, parseFrontmatter } from './frontmatter'
 import { basename, parseTarget } from './links'
-import { codeRanges, inRanges } from './md'
+import { codeRanges, embedRanges, inRanges } from './md'
 
 const WIKILINK_RE = /\[\[([^\]\n]+?)\]\]/g
 // A tag needs at least one letter (the lookahead), so `#2024` is a plain number
@@ -24,7 +24,9 @@ function parseLinkBody(body: string): LinkRef {
 
 export function parseNote(path: string, text: string): ParsedNote {
   const { data, body } = parseFrontmatter(text)
-  const skip = codeRanges(body)
+  // Query/base blocks are skipped alongside code: their #tags and [[links]] are
+  // search criteria, not things this note is about.
+  const skip = [...codeRanges(body), ...embedRanges(body)]
 
   // --- Wikilinks ---
   const links: LinkRef[] = []
