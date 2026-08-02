@@ -26,6 +26,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const setEditorFontSize = useStore((s) => s.setEditorFontSize)
   const smartLinkTitles = useStore((s) => s.smartLinkTitles)
   const setSmartLinkTitles = useStore((s) => s.setSmartLinkTitles)
+  const homeJournal = useStore((s) => s.homeJournal)
+  const setHomeJournal = useStore((s) => s.setHomeJournal)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -123,6 +125,22 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             ))}
           </div>
           <div className="settings-hint">Sets the size and typeface of the writing area. Code stays monospace.</div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-label">On launch</div>
+          <div className="seg">
+            <button className={'seg-btn' + (homeJournal ? ' active' : '')} onClick={() => setHomeJournal(true)}>
+              ☼ Today
+            </button>
+            <button className={'seg-btn' + (!homeJournal ? ' active' : '')} onClick={() => setHomeJournal(false)}>
+              Last note
+            </button>
+          </div>
+          <div className="settings-hint">
+            Open on the Journal, with today at the top — capture first, file later. Takes effect
+            the next time a vault is opened. ⌘D goes to today from anywhere.
+          </div>
         </div>
 
         <div className="settings-section">

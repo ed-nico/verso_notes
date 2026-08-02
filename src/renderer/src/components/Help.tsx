@@ -200,7 +200,8 @@ const SECTIONS: Section[] = [
       { k: 'themes', d: 'Settings → Dark, Paper (warm light, grain, serif) or Light, plus six accents.' },
       { k: 'editor font', d: 'Sans / Serif / Mono and a size, independent of the theme.' },
       { k: '.verso/custom.css', d: 'Drop CSS in your vault to restyle anything. It hot-reloads on save.' },
-      { k: 'multiple vaults', d: 'Open several folders and swap between them from the top of the sidebar.' }
+      { k: 'multiple vaults', d: 'Open several folders and swap between them from the top of the sidebar.' },
+      { k: 'on launch', d: 'Settings → open on today’s Journal (the default) or on the last note you had.' }
     ]
   }
 ]

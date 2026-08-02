@@ -6,7 +6,7 @@ import { basename, dirname, pathForNewNote, resolveTarget, rewriteLinks } from '
 import { resetSpell } from './lib/spell'
 import { getFrontmatter, parseFrontmatter, replaceFrontmatter } from './lib/frontmatter'
 import { applyTemplate } from './lib/templates'
-import { dailyPath, isValidISO } from './lib/dates'
+import { dailyPath, isValidISO, todayISO } from './lib/dates'
 import { pdfBus } from './lib/pdfbus'
 import { normalizeBases, legacyLocalBases, clearLegacyLocalBases, type Base } from './lib/bases'
 import { dropFromScanCache, clearScanCache } from './lib/query'
@@ -168,6 +168,8 @@ interface VersoState {
   /** Fetch a pasted URL's page title ("smart titles"). The one feature that makes a
    *  network request on its own — off means the app only loads what notes embed. */
   smartLinkTitles: boolean
+  /** Open on the Journal (today) rather than the last note. The app's front door. */
+  homeJournal: boolean
   dirty: boolean
   loading: boolean
   /** The last failed disk write ("path: reason"), surfaced as a toast; null when clear. */
@@ -202,6 +204,7 @@ interface VersoState {
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
   setSmartLinkTitles: (on: boolean) => void
+  setHomeJournal: (on: boolean) => void
   openModal: (modal: Exclude<ModalKind, null>) => void
   closeModal: () => void
   setPalette: (open: boolean) => void
@@ -548,10 +551,18 @@ export const useStore = create<VersoState>((set, get) => {
     clearSearchCache() // …the cached searchable bodies
     clearSimilarCache() // …and the TF-IDF term vectors
 
+    // Home is today's journal unless the user opted out. Landing on ws.files[0]
+    // — whatever sorts first — is arbitrary and gives the app no front door.
+    const home = localStorage.getItem('verso-home') !== 'last'
+    const today = dailyPath(todayISO())
+
     // Read ONLY the note we're about to show, then paint. The file tree comes from
     // `ws.files` (already stat'd by the workspace open), so the vault is navigable
-    // immediately; everything else streams in behind this.
-    const first = ws.files[0]?.path
+    // immediately; everything else streams in behind this. When the journal is home
+    // that note is TODAY's — otherwise the one note we block the first paint on is
+    // the one note we're not about to render.
+    const first =
+      home && ws.files.some((f) => f.path === today) ? today : ws.files[0]?.path
     const texts: Record<string, string> = {}
     const parsed: Record<string, ParsedNote> = {}
     if (first) {
@@ -574,11 +585,15 @@ export const useStore = create<VersoState>((set, get) => {
       loadedCount: Object.keys(texts).length,
       totalCount: ws.files.length,
       dirty: false,
-      history: first ? [{ kind: 'note', path: first }] : [],
-      histIndex: first ? 0 : -1,
+      history: home
+        ? [{ kind: 'view', view: 'journal' }]
+        : first
+          ? [{ kind: 'note', path: first }]
+          : [],
+      histIndex: home || first ? 0 : -1,
       sidePanes: [],
       activePath: first ?? null,
-      view: 'editor'
+      view: home ? 'journal' : 'editor'
     })
 
     // Per-vault side data is small and independent of the note bodies — fetch it
@@ -750,6 +765,7 @@ export const useStore = create<VersoState>((set, get) => {
       (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
+    homeJournal: localStorage.getItem('verso-home') !== 'last',
     dirty: false,
     loading: false,
     saveError: null,
@@ -802,6 +818,11 @@ export const useStore = create<VersoState>((set, get) => {
     setEditorFontSize: (editorFontSize) => {
       localStorage.setItem('verso-fontsize', String(editorFontSize))
       set({ editorFontSize })
+    },
+
+    setHomeJournal: (homeJournal) => {
+      localStorage.setItem('verso-home', homeJournal ? 'journal' : 'last')
+      set({ homeJournal })
     },
 
     setSmartLinkTitles: (smartLinkTitles) => {
