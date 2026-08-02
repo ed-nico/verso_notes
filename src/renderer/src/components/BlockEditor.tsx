@@ -82,7 +82,7 @@ const SLASH_COMMANDS: { cmd: string; label: string; icon: string }[] = [
   { cmd: 'callout', label: 'Callout', icon: '⚑' },
   { cmd: 'math', label: 'Math block', icon: '∑' },
   { cmd: 'mermaid', label: 'Mermaid diagram', icon: '◇' },
-  { cmd: 'query', label: 'List — find notes or lines…', icon: '⌕' },
+  { cmd: 'query', label: 'Query — find notes or lines…', icon: '⌕' },
   { cmd: 'base', label: 'Embed a saved Base view', icon: '▦' }
 ]
 
@@ -1261,7 +1261,13 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
   const acItems = (state: AcState): AcSuggestion[] => {
     const q = state.query.toLowerCase()
     if (state.kind === 'slash-menu') {
-      return SLASH_COMMANDS.filter((c) => c.label.toLowerCase().includes(q)).map((c) => ({
+      // Match the COMMAND as well as its label: what you type after `/` is the
+      // command name, and a label that reads well rarely contains it verbatim
+      // (`/todo` never matched "To-do"; `/query` stopped matching once its label
+      // was reworded).
+      return SLASH_COMMANDS.filter(
+        (c) => c.cmd.toLowerCase().includes(q) || c.label.toLowerCase().includes(q)
+      ).map((c) => ({
         key: c.cmd,
         label: c.label,
         icon: c.icon,
