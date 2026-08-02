@@ -123,6 +123,7 @@ const SECTIONS: Section[] = [
     rows: [
       { k: '/query', d: 'Opens the visual builder — pick conditions, see the match count live, and it writes the query for you. The text stays editable.' },
       { k: '⚙ edit', d: 'On any query block, reopens the builder on that query.' },
+      { k: 'click a result', d: 'Opens it in a pane beside the list, so the query stays on screen. Clicking another result reuses that pane; ⌘-click stacks a new one. Same on the Bases page.' },
       { k: 'scope:notes', d: 'Rows become whole NOTES instead of lines — matched on the note’s own tags/properties, so a note that is only frontmatter still matches.' },
       { k: 'cols:a,b,c', d: 'Columns for scope:notes — any frontmatter key, plus name, tags, date, status, excerpt, path. No spaces around the commas.' },
       { k: 'OR', d: 'Uppercase OR splits alternatives (hand-written only — the builder does AND).' },

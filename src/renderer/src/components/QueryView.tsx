@@ -19,7 +19,8 @@ function cell(v: unknown): string {
 export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void }): React.JSX.Element {
   const index = useStore((s) => s.index)
   const files = useStore((s) => s.files)
-  const openNote = useStore((s) => s.openNote)
+  const previewInSidePane = useStore((s) => s.previewInSidePane)
+  const openInSidePane = useStore((s) => s.openInSidePane)
   const navigate = useStore((s) => s.navigate)
   const toggleTask = useStore((s) => s.toggleTask)
 
@@ -31,7 +32,10 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
     (resolveTarget(r, files.map((f) => f.path)) ?? index.resolvePath(r)) !== null
   const opts = { isResolved, onNavigate: navigate }
 
-  const jump = (path: string): void => openNote(path)
+  // Results open BESIDE the query, not over it: the list is the thing you came
+  // back to. ⌘-click adds a further pane instead of reusing the last one.
+  const jump = (path: string, e?: { metaKey: boolean; ctrlKey: boolean }): void =>
+    e && (e.metaKey || e.ctrlKey) ? openInSidePane(path) : previewInSidePane(path)
 
   // "12" normally; "10 of 63" when a limit: is hiding some, so a truncated
   // result never passes for the whole answer.
@@ -43,7 +47,13 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
     spec.layout === 'gallery' ? (
       <div className="queryview-gallery">
         {rows.map((n) => (
-          <button className="queryview-card" key={n.path} onClick={() => jump(n.path)} title={n.path}>
+          <button
+            className="queryview-card"
+            key={n.path}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => jump(n.path, e)}
+            title={n.path}
+          >
             <span className="queryview-card-name">{n.name}</span>
             {cols
               .filter((c) => c.toLowerCase() !== 'name')
@@ -76,7 +86,12 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
                 {cols.map((c, i) => (
                   <td key={c}>
                     {i === 0 ? (
-                      <button className="queryview-src" onClick={() => jump(n.path)} title={n.path}>
+                      <button
+                        className="queryview-src"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => jump(n.path, e)}
+                        title={n.path}
+                      >
                         {cell(noteColumn(n, c))}
                       </button>
                     ) : (
@@ -119,7 +134,12 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
                   <span className={b.checked ? 'done' : undefined}>{renderInline(b.text, opts)}</span>
                 </td>
                 <td>
-                  <button className="queryview-src" onClick={() => jump(b.path)} title={b.path}>
+                  <button
+                    className="queryview-src"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => jump(b.path, e)}
+                    title={b.path}
+                  >
                     {b.name}
                   </button>
                 </td>
@@ -144,7 +164,12 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
               />
             )}
             <span className={'queryview-text' + (b.checked ? ' done' : '')}>{renderInline(b.text, opts)}</span>
-            <button className="queryview-src" onClick={() => jump(b.path)} title={b.path}>
+            <button
+                    className="queryview-src"
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => jump(b.path, e)}
+                    title={b.path}
+                  >
               {b.name}
             </button>
           </div>

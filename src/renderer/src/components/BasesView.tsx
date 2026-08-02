@@ -11,6 +11,7 @@ export function BasesView(): React.JSX.Element {
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
   const openInSidePane = useStore((s) => s.openInSidePane)
+  const previewInSidePane = useStore((s) => s.previewInSidePane)
   const bases = useStore((s) => s.bases)
   const activeId = useStore((s) => s.activeBaseId)
   const setBases = useStore((s) => s.setBases)
@@ -235,7 +236,13 @@ export function BasesView(): React.JSX.Element {
           </div>
         )}
 
-        {active && <BaseView base={active} openNote={openNote} openInSide={openInSidePane} onPatch={patch} />}
+        {active && <BaseView
+            base={active}
+            openNote={openNote}
+            openInSide={previewInSidePane}
+            addSidePane={openInSidePane}
+            onPatch={patch}
+          />}
 
         {active && active.layout === 'table' && !editing && !hasAgg && (
           <div className="props-hint base-agg-hint">Tip: pick Sum / Average / Min / Max in a column's footer to total it.</div>

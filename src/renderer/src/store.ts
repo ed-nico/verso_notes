@@ -273,6 +273,9 @@ interface VersoState {
   clearFindRequest: () => void
   /** Open a note in a new right-hand split (cmd/ctrl-click). */
   openInSidePane: (path: string) => void
+  /** Open in a side pane, REUSING the last note pane — for clicking through a
+   *  list of results without stacking a split per click. */
+  previewInSidePane: (path: string) => void
   openView: (view: ViewMode) => void
   /** Open a PDF in a right-hand split; optionally scroll to a highlight. */
   openPdf: (path: string, highlightId?: string) => void
@@ -1182,6 +1185,21 @@ export const useStore = create<VersoState>((set, get) => {
       if (panes.some((p) => p.kind === 'note' && p.path === path)) return // already open in a split
       void ensureLoaded(path) // may still be streaming in — don't open it blank
       set({ sidePanes: [...panes, { kind: 'note', path }] })
+    },
+
+    previewInSidePane: (path) => {
+      const panes = get().sidePanes
+      if (panes.some((p) => p.kind === 'note' && p.path === path)) return // already showing
+      void ensureLoaded(path)
+      // REUSE the last note pane rather than appending. Clicking through a list of
+      // results is browsing, not assembling a workspace: stacking a pane per click
+      // is the same "jumping around" this is meant to avoid. ⌘-click still adds a
+      // pane when you do want to line several up. PDF panes are never displaced.
+      const last = panes.map((p) => p.kind).lastIndexOf('note')
+      if (last === -1) return set({ sidePanes: [...panes, { kind: 'note', path }] })
+      const next = [...panes]
+      next[last] = { kind: 'note', path }
+      set({ sidePanes: next })
     },
 
     goBack: () => {

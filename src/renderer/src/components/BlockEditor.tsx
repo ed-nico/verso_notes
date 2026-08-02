@@ -238,7 +238,16 @@ interface Snapshot {
   sel: EditorSel
 }
 
-export function BlockEditor({ path }: { path: string }): React.JSX.Element {
+export function BlockEditor({
+  path,
+  toolbar = 'always'
+}: {
+  path: string
+  /** 'always' (a normal note) or 'editing' — only while THIS editor has the caret.
+   *  The journal stacks one editor per day, so an always-on bar repeats down the
+   *  whole page; 'editing' shows exactly one, on the day you're actually in. */
+  toolbar?: 'always' | 'editing'
+}): React.JSX.Element {
   const [blocks, setBlocks] = useState<Block[]>(() => {
     const p = parseBlocks(useStore.getState().texts[path] ?? '')
     return p.blocks.length ? p.blocks : [makeBlock()]
@@ -2080,6 +2089,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
     >
       {/* Word-style formatting bar. It writes the markdown for you on the focused block;
           mousedown is swallowed so clicks never steal focus/selection from the textarea. */}
+      {(toolbar === 'always' || editingId !== null) && (
       <div
         className="fmt-bar"
         title={canFmt ? undefined : 'Click into a line of text to enable formatting'}
@@ -2149,6 +2159,7 @@ export function BlockEditor({ path }: { path: string }): React.JSX.Element {
           ❝
         </button>
       </div>
+      )}
       {find && (
         <div className="find-bar" style={barStyle} onKeyDown={onFindKeyDown}>
           <input

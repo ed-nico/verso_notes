@@ -259,13 +259,17 @@ export function BaseView({
   base,
   openNote,
   openInSide,
+  addSidePane,
   limit,
   onPatch
 }: {
   base: Base
   openNote: (path: string) => void
-  /** ⌘/Ctrl-click opens the note here (a side pane) instead of replacing the main view. */
+  /** Plain click opens the note here (a side pane), leaving the base on screen.
+   *  ⌘/Ctrl-click adds a further pane rather than reusing the last one. */
   openInSide?: (path: string) => void
+  /** ⌘/Ctrl-click target — a NEW pane alongside, instead of reusing one. */
+  addSidePane?: (path: string) => void
   limit?: number
   onPatch?: (p: Partial<Base>) => void
 }): React.JSX.Element {
@@ -275,9 +279,14 @@ export function BaseView({
   const interactive = !!onPatch
   const cols = base.columns
   const [dragOver, setDragOver] = useState<string | null>(null)
-  // ⌘/Ctrl-click a note → side pane; plain click → main view.
-  const open = (e: { metaKey: boolean; ctrlKey: boolean }, path: string): void =>
-    (e.metaKey || e.ctrlKey) && openInSide ? openInSide(path) : openNote(path)
+  // Click a row → open it BESIDE the table, so the base stays on screen;
+  // ⌘/Ctrl-click stacks a further pane. Without a side-pane host (an embed in a
+  // context that can't split) fall back to replacing the main view.
+  const open = (e: { metaKey: boolean; ctrlKey: boolean }, path: string): void => {
+    if ((e.metaKey || e.ctrlKey) && addSidePane) return addSidePane(path)
+    if (openInSide) return openInSide(path)
+    openNote(path)
+  }
 
   const all = useMemo(() => baseRows(base, parsed, index), [base, parsed, index])
   const visible = limit && limit > 0 ? all.slice(0, limit) : all
@@ -545,6 +554,7 @@ export function BaseEmbed({ raw }: { raw: string }): React.JSX.Element {
   const bases = useStore((s) => s.bases)
   const openNote = useStore((s) => s.openNote)
   const openInSidePane = useStore((s) => s.openInSidePane)
+  const previewInSidePane = useStore((s) => s.previewInSidePane)
   const openBase = useStore((s) => s.openBase)
   const openView = useStore((s) => s.openView)
   const { name, limit, layout } = parseBaseArgs(raw)
@@ -567,7 +577,13 @@ export function BaseEmbed({ raw }: { raw: string }): React.JSX.Element {
         </span>
         {limit ? <span className="base-embed-sub">top {limit}</span> : null}
       </div>
-      <BaseView base={effective} openNote={openNote} openInSide={openInSidePane} limit={limit} />
+      <BaseView
+        base={effective}
+        openNote={openNote}
+        openInSide={previewInSidePane}
+        addSidePane={openInSidePane}
+        limit={limit}
+      />
     </div>
   )
 }

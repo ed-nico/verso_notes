@@ -70,7 +70,10 @@ const JournalDay = memo(
           </div>
         )}
 
-        <BlockEditor key={path} path={path} />
+        {/* One formatting bar for the whole page, on the day you're editing —
+            the journal stacks an editor per day, so 'always' repeats it down the
+            entire scroll. */}
+        <BlockEditor key={path} path={path} toolbar="editing" />
       </section>
     )
   },
