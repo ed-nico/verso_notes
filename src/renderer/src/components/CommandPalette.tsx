@@ -63,7 +63,7 @@ export function CommandPalette(): React.JSX.Element | null {
         icon: '▤',
         run: () => act(() => void newFromTemplate(t.path))
       })),
-      { id: 'journal', label: 'Open Journal', icon: '☼', run: () => act(() => openView('journal')) },
+      { id: 'journal', label: 'Open Journal (⌘D)', icon: '☼', run: () => act(() => openView('journal')) },
       { id: 'todos', label: 'Open Todos', icon: '✓', run: () => act(() => openView('todos')) },
       { id: 'graph', label: 'Open Graph', icon: '⦿', run: () => act(() => openView('graph')) },
       { id: 'bases', label: 'Open Bases', icon: '▦', run: () => act(() => openView('database')) },

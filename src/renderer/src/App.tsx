@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useStore, templatesFromFiles, EDITOR_FONTS, ACCENTS, type SidePane } from './store'
+import { todayISO } from './lib/dates'
 import { Sidebar } from './components/Sidebar'
 import { Backlinks } from './components/Backlinks'
 import { GraphView } from './components/GraphView'
@@ -453,6 +454,17 @@ export function App(): React.JSX.Element {
       } else if (e.key === ']' && !typing) {
         e.preventDefault()
         s.goForward()
+      } else if (
+        (e.key === 'd' || e.key === 'D') &&
+        // The canvas binds ⌘D to duplicate on window too — both handlers would
+        // fire and you'd copy a card AND navigate away from it.
+        s.view !== 'canvas'
+      ) {
+        // Today's daily note itself, not the Journal feed: ⌘D is "take me to today's
+        // page". ensureDailyNote seeds it from Templates/Journal on first open.
+        // Deliberately NOT gated on `typing` — jumping to today mid-sentence is the point.
+        e.preventDefault()
+        void s.ensureDailyNote(todayISO()).then((p) => useStore.getState().openNote(p))
       } else if (e.key === 'w' && !typing && s.sidePanes.length) {
         e.preventDefault()
         s.closeSidePane()
