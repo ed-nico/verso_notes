@@ -39,7 +39,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span>Settings</span>
           <button className="icon-btn" onClick={onClose} title="Close">
@@ -47,6 +47,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           </button>
         </div>
 
+        <div className="settings-body">
         <div className="settings-section">
           <div className="settings-label">Vault</div>
           <div className="settings-path">{workspace?.root ?? 'No folder open'}</div>
@@ -190,6 +191,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           <div className="settings-hint">
             One request to GitHub, only when you click — Verso never checks automatically.
           </div>
+        </div>
         </div>
       </div>
     </div>

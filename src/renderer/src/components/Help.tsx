@@ -269,7 +269,11 @@ export function Help({ onClose }: { onClose: () => void }): React.JSX.Element {
               {s.note && !q && <div className="help-section-note">{s.note}</div>}
               {s.rows.map((r) => (
                 <div className="help-row" key={r.k + r.d}>
-                  <kbd className="help-key">{r.k}</kbd>
+                  {/* Fixed-width cell keeps the descriptions in a column; the chip
+                      inside hugs its own text so a short key isn't a wide empty box. */}
+                  <span className="help-keycell">
+                    <kbd className="help-key">{r.k}</kbd>
+                  </span>
                   <span className="help-desc">{r.d}</span>
                 </div>
               ))}

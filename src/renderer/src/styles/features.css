@@ -251,6 +251,21 @@
   font-size: 14px;
 }
 
+/* ---------- Settings modal ----------
+   Wider than the default modal so the seg-button rows (six accents, seven font
+   sizes) sit on one line instead of wrapping, which is what made it tall; the
+   body then scrolls rather than growing the dialog past the window. */
+.modal.settings-modal {
+  width: 620px;
+  display: flex;
+  flex-direction: column;
+  max-height: 76vh;
+}
+.settings-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
 /* ---------- Help modal ---------- */
 .modal.help-modal {
   width: 640px;
@@ -315,10 +330,14 @@
   align-items: baseline;
   padding: 3px 0;
 }
-.help-key {
+.help-keycell {
   flex: none;
   width: 170px;
-  text-align: right;
+}
+.help-key {
+  display: inline-block;
+  max-width: 100%;
+  text-align: left;
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px;
   color: var(--text);
