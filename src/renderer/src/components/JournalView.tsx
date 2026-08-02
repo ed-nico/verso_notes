@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { BlockEditor } from './BlockEditor'
+import { FormatBar } from './FormatBar'
 import { TodoItem } from './TodoItem'
 import { addDays, dailyPath, formatLong, todayISO } from '../lib/dates'
 import { aggregateTodos, dueOn, overdue, type Todo } from '../lib/todos'
@@ -70,10 +71,7 @@ const JournalDay = memo(
           </div>
         )}
 
-        {/* One formatting bar for the whole page, on the day you're editing —
-            the journal stacks an editor per day, so 'always' repeats it down the
-            entire scroll. */}
-        <BlockEditor key={path} path={path} toolbar="editing" />
+        <BlockEditor key={path} path={path} toolbar="none" />
       </section>
     )
   },
@@ -113,6 +111,12 @@ export function JournalView(): React.JSX.Element {
   return (
     <div className="scroll-area journal" onScroll={onScroll}>
       <div className="doc journal-doc">
+        {/* ONE bar for the whole page. Each day is its own BlockEditor, so a bar
+            per editor would repeat down the entire scroll; this one follows
+            whichever day has the caret (see lib/formatbus). Rendered as a DIRECT
+            child so its `position: sticky` spans the whole document — inside a
+            wrapper it would scroll away with that wrapper's short box. */}
+        <FormatBar />
         {days.map((iso) => (
           <JournalDay
             key={iso}

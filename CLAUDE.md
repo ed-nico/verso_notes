@@ -269,10 +269,15 @@ lists all instances in a table, one column per field. Store surface: `applySuper
 
 ### Cross-component buses
 
-`lib/notebus.ts` and `lib/pdfbus.ts` are small pub/sub channels used where the store isn't
-the right owner — e.g. the PDF pane pushing a block into the live note editor, or scrolling a
+`lib/notebus.ts`, `lib/pdfbus.ts` and `lib/formatbus.ts` are small pub/sub channels used where
+the store isn't the right owner — e.g. the PDF pane pushing a block into the live note editor, or scrolling a
 PDF to a highlight. The block editor owns its own block state, so inserts go through the bus
-rather than the store.
+rather than the store. `formatbus` carries the same idea to the toolbar: the journal stacks a
+`BlockEditor` per day, so `components/FormatBar` is lifted to the top of that page and the
+focused editor publishes its `applyInline`/`setBlockKind` closures for it to drive. The slot is
+released on blur only by the editor that still owns it (`owner` symbol) — clicking straight
+from one day into another publishes the new editor before the old one's cleanup runs. A normal
+note passes `toolbar="always"` and renders its own bound bar instead.
 
 ## Gotchas
 

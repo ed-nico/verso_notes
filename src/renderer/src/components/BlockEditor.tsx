@@ -29,6 +29,8 @@ import {
 import { dateSuggestions, formatLong } from '../lib/dates'
 import { QueryView } from './QueryView'
 import { QueryBuilder } from './QueryBuilder'
+import { FormatBar } from './FormatBar'
+import { clearFormatter, setFormatter, type Formatter } from '../lib/formatbus'
 import { BaseEmbed } from './BaseView'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
 import { MermaidBlock } from './MermaidBlock'
@@ -243,10 +245,10 @@ export function BlockEditor({
   toolbar = 'always'
 }: {
   path: string
-  /** 'always' (a normal note) or 'editing' — only while THIS editor has the caret.
-   *  The journal stacks one editor per day, so an always-on bar repeats down the
-   *  whole page; 'editing' shows exactly one, on the day you're actually in. */
-  toolbar?: 'always' | 'editing'
+  /** 'always' renders the bar inside this editor (a normal note). 'none' omits
+   *  it — the journal stacks an editor per day and hosts ONE lifted bar instead,
+   *  which this editor still drives through lib/formatbus while focused. */
+  toolbar?: 'always' | 'none'
 }): React.JSX.Element {
   const [blocks, setBlocks] = useState<Block[]>(() => {
     const p = parseBlocks(useStore.getState().texts[path] ?? '')
@@ -2045,7 +2047,24 @@ export function BlockEditor({
   }, [blocks, zoomId])
 
   const editBlock = editingId != null ? (blocks.find((b) => b.id === editingId) ?? null) : null
-  const canFmt = editBlock !== null && editBlock.type !== 'code' && editBlock.type !== 'table'
+
+  // A bar rendered OUTSIDE this editor (the journal's single top bar) needs a
+  // handle on these closures. Publish while focused; release on blur/unmount,
+  // but only if we still hold the slot — clicking straight from one day's editor
+  // into another fires the new editor's publish before this one's cleanup.
+  const ownerRef = useRef<symbol>(Symbol('editor'))
+  const formatter: Formatter = { owner: ownerRef.current, applyInline, setBlockKind, block: editBlock }
+  useEffect(() => {
+    const owner = ownerRef.current
+    if (editingId === null) clearFormatter(owner)
+    else setFormatter({ owner, applyInline, setBlockKind, block: editBlock })
+    // Re-published whenever the focused block changes so pressed states track it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingId, editBlock])
+  useEffect(() => {
+    const owner = ownerRef.current
+    return () => clearFormatter(owner)
+  }, [])
 
   return (
     <>
@@ -2087,79 +2106,7 @@ export function BlockEditor({
         }
       }}
     >
-      {/* Word-style formatting bar. It writes the markdown for you on the focused block;
-          mousedown is swallowed so clicks never steal focus/selection from the textarea. */}
-      {(toolbar === 'always' || editingId !== null) && (
-      <div
-        className="fmt-bar"
-        title={canFmt ? undefined : 'Click into a line of text to enable formatting'}
-        onMouseDown={(e) => e.preventDefault()}
-      >
-        <button className="fmt-btn fmt-bold" title="Bold (⌘B)" disabled={!canFmt} onClick={() => applyInline('**')}>
-          B
-        </button>
-        <button className="fmt-btn fmt-italic" title="Italic (⌘I)" disabled={!canFmt} onClick={() => applyInline('_')}>
-          I
-        </button>
-        <button className="fmt-btn fmt-strike" title="Strikethrough" disabled={!canFmt} onClick={() => applyInline('~~')}>
-          S
-        </button>
-        <button className="fmt-btn fmt-hl" title="Highlight" disabled={!canFmt} onClick={() => applyInline('==')}>
-          A
-        </button>
-        <button className="fmt-btn fmt-mono" title="Inline code (⌘E)" disabled={!canFmt} onClick={() => applyInline('`')}>
-          {'</>'}
-        </button>
-        <button className="fmt-btn fmt-mono" title="Wikilink" disabled={!canFmt} onClick={() => applyInline('[[', ']]')}>
-          {'[[ ]]'}
-        </button>
-        <span className="fmt-sep" />
-        {([1, 2, 3] as const).map((n) => (
-          <button
-            key={n}
-            className={'fmt-btn' + (editBlock?.type === 'heading' && editBlock.level === n ? ' on' : '')}
-            title={`Heading ${n}`}
-            disabled={!canFmt}
-            onClick={() => setBlockKind(n)}
-          >
-            H{n}
-          </button>
-        ))}
-        <span className="fmt-sep" />
-        <button
-          className={'fmt-btn' + (editBlock?.type === 'bullet' && !editBlock.ordered ? ' on' : '')}
-          title="Bulleted list"
-          disabled={!canFmt}
-          onClick={() => setBlockKind('bullet')}
-        >
-          •
-        </button>
-        <button
-          className={'fmt-btn' + (editBlock?.type === 'bullet' && editBlock.ordered ? ' on' : '')}
-          title="Numbered list"
-          disabled={!canFmt}
-          onClick={() => setBlockKind('ordered')}
-        >
-          1.
-        </button>
-        <button
-          className={'fmt-btn' + (editBlock?.type === 'task' ? ' on' : '')}
-          title="To-do (⌘↩)"
-          disabled={!canFmt}
-          onClick={() => setBlockKind('task')}
-        >
-          ☐
-        </button>
-        <button
-          className={'fmt-btn' + (editBlock?.type === 'quote' ? ' on' : '')}
-          title="Quote"
-          disabled={!canFmt}
-          onClick={() => setBlockKind('quote')}
-        >
-          ❝
-        </button>
-      </div>
-      )}
+      {toolbar === 'always' && <FormatBar fmt={formatter} />}
       {find && (
         <div className="find-bar" style={barStyle} onKeyDown={onFindKeyDown}>
           <input
