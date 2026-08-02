@@ -220,6 +220,10 @@ interface VersoState {
   createSupertag: (name: string, opts?: { open?: boolean }) => Promise<string | null>
   /** Write a supertag's field schema to its definition note. */
   setSupertagFields: (defPath: string, fields: FieldDef[]) => Promise<void>
+  /** Delete a tag's definition note, i.e. its schema. The tag itself survives on
+   *  every note carrying it — this demotes a typed tag back to a plain one (and,
+   *  for a tag nothing uses, removes it entirely). */
+  removeSupertag: (tag: string) => Promise<void>
   /** Apply `tag` to every note under `folder` (recursively). */
   applySupertagToFolder: (folder: string, tag: string) => Promise<void>
   /** Create a supertag named after `folder`, inferring its fields from the folder's notes,
@@ -876,6 +880,17 @@ export const useStore = create<VersoState>((set, get) => {
       await get().applyFileEvent({ type: 'add', file: created })
       if (open) get().openNote(created.path)
       return created.path
+    },
+
+    removeSupertag: async (tag) => {
+      const norm = normTag(tag)
+      const st = buildSupertagIndex(supertagsFromParsed(get().parsed)).get(norm)
+      if (!st) return
+      await get().deleteNote(st.path)
+      // Drop the selection if it pointed at a tag that no longer exists anywhere;
+      // a tag nothing carries has no page left to show.
+      const stillUsed = Object.values(get().parsed).some((n) => n.tags.some((t) => normTag(t) === norm))
+      if (!stillUsed && get().activeTag && normTag(get().activeTag as string) === norm) set({ activeTag: null })
     },
 
     setSupertagFields: async (defPath, fields) => {

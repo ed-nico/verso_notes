@@ -29,14 +29,18 @@ function fmtCell(v: unknown): string {
 function SchemaEditor({
   tag,
   st,
-  index
+  index,
+  instances
 }: {
   tag: string
   st: Supertag | undefined
   index: Map<string, Supertag>
+  /** How many notes carry this tag — decides what removing the schema costs. */
+  instances: number
 }): React.JSX.Element {
   const setSupertagFields = useStore((s) => s.setSupertagFields)
   const createSupertag = useStore((s) => s.createSupertag)
+  const removeSupertag = useStore((s) => s.removeSupertag)
   const [name, setName] = useState('')
   const [type, setType] = useState<FieldType>('text')
 
@@ -60,6 +64,19 @@ function SchemaEditor({
     setName('')
     setType('text')
   }
+  /** Delete the definition note. Spell out the consequence, which differs sharply:
+   *  with no instances the tag disappears entirely; with instances it survives,
+   *  untyped, and the field VALUES already in those notes stay as plain properties. */
+  const removeSchema = (): void => {
+    if (!st) return
+    const msg =
+      instances === 0
+        ? `Remove the tag “${tag}”?\n\nNothing uses it, so it will be gone. ${st.path} goes to the Trash.`
+        : `Remove the schema from “${tag}”?\n\n${st.path} goes to the Trash. The tag stays on ${instances} note${
+            instances === 1 ? '' : 's'
+          } as a plain tag, and any field values already saved in them are kept as ordinary properties.`
+    if (window.confirm(msg)) void removeSupertag(tag)
+  }
   const updateField = (i: number, patch: Partial<FieldDef>): void =>
     save(own.map((f, k) => (k === i ? { ...f, ...patch } : f)))
   const removeField = (i: number): void => save(own.filter((_, k) => k !== i))
@@ -70,6 +87,11 @@ function SchemaEditor({
         Schema
         {st && st.extends.length > 0 && <span className="st-extends">inherits {st.extends.join(', ')}</span>}
         {!st && <span className="st-extends">add a field to give this tag structure</span>}
+        {st && (
+          <button className="st-remove" onClick={removeSchema} title={`Delete ${st.path}`}>
+            {instances === 0 ? 'Remove tag' : 'Remove schema'}
+          </button>
+        )}
       </div>
 
       {inherited.map((f) => (
@@ -226,7 +248,9 @@ export function TagsView(): React.JSX.Element {
           )}
         </div>
 
-        {activeTag && <SchemaEditor tag={activeTag} st={activeSupertag} index={stIndex} />}
+        {activeTag && (
+          <SchemaEditor tag={activeTag} st={activeSupertag} index={stIndex} instances={notes.length} />
+        )}
 
         {activeTag && (
           <div className="tag-notes">
