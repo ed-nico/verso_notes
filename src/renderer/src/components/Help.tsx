@@ -53,6 +53,9 @@ const SECTIONS: Section[] = [
       { k: '⌘-click', d: 'Open a note or link in a split beside the current one. Repeat for several side by side.' },
       { k: '⌘[ / ⌘]', d: 'Back / forward through where you’ve been.' },
       { k: '⌘\\  ·  ⌘⇧\\', d: 'Show / hide the left sidebar · the right panel.' },
+      { k: '⌘⌥\\', d: 'Zen mode — hide every panel and the top bar, leaving just the note. Esc leaves it.' },
+      { k: 'drag a panel edge', d: 'Resize the sidebar or the right panel; the width is remembered.' },
+      { k: '⌘⇧T', d: 'Add a task to today’s note from anywhere, without leaving the page you’re on. ⌘↵ keeps the box open for the next one.' },
       { k: '⌘W', d: 'Close the last split.' },
       { k: 'drag a note', d: 'Reorder within a folder, or drop onto a folder to move it in.' }
     ]
@@ -175,6 +178,7 @@ const SECTIONS: Section[] = [
       { k: '⌘A ⌘A ⌘A', d: 'Select the block’s text → the block + subtree → the whole view.' },
       { k: '⌥↑ / ⌥↓  ·  ⇧↑ / ⇧↓', d: 'Start a block selection · grow or shrink it.' },
       { k: '⌘⇧↑ / ⌘⇧↓', d: 'Move the block (or selection) up / down.' },
+      { k: 'right-click a row', d: 'Highlight it in one of nine colours — the same palette Select properties use. Works on a whole selection at once.' },
       { k: '⌘C / ⌘X / ⌘V', d: 'Copy / cut / paste whole blocks, across notes too.' },
       { k: '⌘Z / ⌘⇧Z', d: 'Undo / redo edits.' }
     ]

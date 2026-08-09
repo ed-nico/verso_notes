@@ -25,6 +25,17 @@
   --heading: #d2823a;
   --tag: #67bfa0;
   --danger: #e06c75;
+  /* Select-option chips (lib/propColors' tokens). Tuned to read on the dark
+     canvas; the light/paper themes darken them in panels.css. */
+  --oc-gray: #9aa0a6;
+  --oc-red: #ef6a6a;
+  --oc-orange: #e8933f;
+  --oc-yellow: #d7bb45;
+  --oc-green: #56b98a;
+  --oc-teal: #45b6b0;
+  --oc-blue: #6f9bf0;
+  --oc-purple: #a882e8;
+  --oc-pink: #e07ab5;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'SF Mono', ui-monospace, 'Cascadia Code', Menlo, Consolas, monospace;
   /* Layered elevation shadows — softer in light mode (overridden below). */

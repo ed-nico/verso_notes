@@ -47,7 +47,7 @@ export type ViewMode =
   | 'tags'
   | 'canvas'
   | 'tend'
-export type ModalKind = 'settings' | 'help' | 'compile' | null
+export type ModalKind = 'settings' | 'help' | 'compile' | 'task' | null
 
 /** One back/forward history step. A note opens the editor; a view step restores a
  *  non-editor screen (Bases/Graph/Tags/Canvas/…) so Back returns where you actually came from. */
@@ -192,6 +192,12 @@ interface VersoState {
   sidebarOpen: boolean
   /** Whether the right sidebar (calendar/properties/TOC/graph) is shown. */
   rightbarOpen: boolean
+  /** Left sidebar width in px (drag its edge; persisted). */
+  sidebarWidth: number
+  /** Right panel width in px (drag its edge; persisted). */
+  rightbarWidth: number
+  /** Zen mode: chrome hidden, just the document. Session-only, never persisted. */
+  zen: boolean
 
   toggleTheme: () => void
   setTheme: (t: ThemeName) => void
@@ -201,6 +207,11 @@ interface VersoState {
   dismissSaveError: () => void
   toggleSidebar: () => void
   toggleRightbar: () => void
+  setSidebarWidth: (px: number) => void
+  setRightbarWidth: (px: number) => void
+  toggleZen: () => void
+  /** Append `- [ ] text` to today's daily note, creating it if today is new. */
+  addTaskToToday: (text: string) => Promise<void>
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
   setSmartLinkTitles: (on: boolean) => void
@@ -343,6 +354,17 @@ function wrapMention(line: string, name: string): string {
 /** Notes read per round trip while hydrating. Large enough that the IPC overhead is
  *  amortized, small enough that the renderer paints between batches. */
 const HYDRATE_CHUNK = 400
+
+/** Drag limits for the two side panels. Clamped on read as well as on write, so a
+ *  stale localStorage value (or a window that shrank since) can never leave a panel
+ *  wider than the window with no way to grab its handle back. */
+const PANEL_LIMITS = { sidebar: { min: 180, max: 520 }, rightbar: { min: 200, max: 560 } }
+
+function clampPanel(px: number, which: 'sidebar' | 'rightbar'): number {
+  const { min, max } = PANEL_LIMITS[which]
+  const room = typeof window !== 'undefined' ? Math.max(min, window.innerWidth - 420) : max
+  return Math.round(Math.min(Math.max(px, min), Math.min(max, room)))
+}
 
 /**
  * Load this workspace's saved Bases from `.verso/bases.json`. One-time migration:
@@ -759,6 +781,11 @@ export const useStore = create<VersoState>((set, get) => {
     paletteOpen: false,
     sidebarOpen: localStorage.getItem('verso-sidebar') !== 'closed',
     rightbarOpen: localStorage.getItem('verso-rightbar') !== 'closed',
+    sidebarWidth: clampPanel(Number(localStorage.getItem('verso-sidebar-w')) || 260, 'sidebar'),
+    rightbarWidth: clampPanel(Number(localStorage.getItem('verso-rightbar-w')) || 280, 'rightbar'),
+    // Zen is deliberately NOT persisted: it's a posture for the next hour, not a
+    // setting — booting into a chromeless window would just look broken.
+    zen: false,
     theme: (localStorage.getItem('verso-theme') as ThemeName | null) ?? 'dark',
     accent: localStorage.getItem('verso-accent') ?? 'indigo',
     customCss: null,
@@ -812,6 +839,20 @@ export const useStore = create<VersoState>((set, get) => {
       localStorage.setItem('verso-rightbar', rightbarOpen ? 'open' : 'closed')
       set({ rightbarOpen })
     },
+
+    setSidebarWidth: (px) => {
+      const sidebarWidth = clampPanel(px, 'sidebar')
+      localStorage.setItem('verso-sidebar-w', String(sidebarWidth))
+      set({ sidebarWidth })
+    },
+
+    setRightbarWidth: (px) => {
+      const rightbarWidth = clampPanel(px, 'rightbar')
+      localStorage.setItem('verso-rightbar-w', String(rightbarWidth))
+      set({ rightbarWidth })
+    },
+
+    toggleZen: () => set({ zen: !get().zen }),
 
     setEditorFont: (editorFont) => {
       localStorage.setItem('verso-font', editorFont)
@@ -1384,6 +1425,24 @@ export const useStore = create<VersoState>((set, get) => {
         }
       }
       return path
+    },
+
+    addTaskToToday: async (text) => {
+      const task = text.trim()
+      if (!task) return
+      const path = await get().ensureDailyNote(todayISO())
+      // The day may not have streamed in yet (hydration) — read it rather than
+      // append to an empty string and wipe the entry.
+      if (get().texts[path] === undefined) {
+        const content = await window.verso.readNote(path)
+        if (content !== null && get().texts[path] === undefined) updateNoteState(path, content.text)
+      }
+      const body = parseFrontmatter(get().texts[path] ?? '').body
+      const line = `- [ ] ${task}`
+      get().setNoteBody(path, body.trimEnd() ? `${body.trimEnd()}\n${line}\n` : `${line}\n`)
+      // Straight to disk: quick capture is used mid-thought and then abandoned —
+      // it must survive a quit before the 600ms debounce fires.
+      await get().saveActive()
     },
 
     applyFileEvent: async (event) => {

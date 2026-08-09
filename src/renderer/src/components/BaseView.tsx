@@ -4,6 +4,9 @@ import { assetUrl } from '../lib/assets'
 import { passesFilter, type AggKind, type Base } from '../lib/bases'
 import { parseLooseDate } from '../lib/dates'
 import { propOptions, storedPropType, typeOf, type PropType } from './PropertiesPanel'
+import { optionColors, type OptionColor } from '../lib/propColors'
+import { vaultPropSchemas, type PropSchema } from '../lib/propSchema'
+import { OptionChip, SelectChip } from './SelectChip'
 import type { ParsedNote } from '@shared/types'
 import type { VaultIndex } from '../lib/vault'
 
@@ -39,7 +42,7 @@ export function cellValue(row: Row, key: string): unknown {
   return row.fm[key]
 }
 
-function renderCell(row: Row, key: string): React.ReactNode {
+function renderCell(row: Row, key: string, colors?: Record<string, OptionColor>): React.ReactNode {
   if (key === 'tags') return row.tags.map((t) => <span className="pill" key={t}>#{t}</span>)
   const v = cellValue(row, key)
   const img = imageValue(v)
@@ -47,17 +50,21 @@ function renderCell(row: Row, key: string): React.ReactNode {
   if (Array.isArray(v)) return v.map((x, i) => <span className="pill" key={i}>{String(x)}</span>)
   if (v === undefined || v === null || v === '') return <span className="db-empty">—</span>
   if (typeof v === 'boolean') return v ? '✓' : '✗'
+  // A value the column's Select gave a colour to reads as its chip, everywhere the
+  // table/gallery/board shows it — not just where it's editable.
+  if (colors && typeof v === 'string' && colors[v]) return <OptionChip value={v} color={colors[v]} />
   return String(v)
 }
 
 /** A whole column's editor type — resolved once from all rows so editing is consistent
  *  even for empty cells: an explicit `_types` choice on any note wins, else the type is
  *  inferred from the first non-empty value, so a date column edits as a date everywhere. */
-function columnType(rows: Row[], key: string): PropType {
+function columnType(rows: Row[], key: string, schemas: Record<string, PropSchema>): PropType {
   for (const r of rows) {
     const t = storedPropType(r.fm, key)
     if (t) return t
   }
+  if (schemas[key]) return 'select'
   for (const r of rows) {
     const v = r.fm[key]
     if (v !== undefined && v !== null && v !== '') return typeOf(v)
@@ -65,13 +72,27 @@ function columnType(rows: Row[], key: string): PropType {
   return 'text'
 }
 
-/** A select column's options, taken from the first note that defines them. */
-function columnOptions(rows: Row[], key: string): string[] {
+/** A select column's options: from the first row that defines them, else the
+ *  vault-wide schema — the rows of a base are often notes that only USE a
+ *  property whose vocabulary is defined elsewhere (lib/propSchema). */
+function columnOptions(rows: Row[], key: string, schemas: Record<string, PropSchema>): string[] {
   for (const r of rows) {
     const o = propOptions(r.fm, key)
     if (o.length) return o
   }
-  return []
+  return schemas[key]?.options ?? []
+}
+
+/** A select column's option colours, resolved the same way as its options. */
+function columnColors(
+  rows: Row[],
+  key: string,
+  schemas: Record<string, PropSchema>
+): Record<string, OptionColor> {
+  for (const r of rows) {
+    if (propOptions(r.fm, key).length) return optionColors(r.fm, key)
+  }
+  return schemas[key]?.colors ?? {}
 }
 
 /** Click-to-edit a frontmatter cell in the interactive Bases table. Writes back to the
@@ -81,12 +102,14 @@ function EditableDataCell({
   row,
   col,
   type,
-  options
+  options,
+  colors
 }: {
   row: Row
   col: string
   type: PropType
   options: string[]
+  colors: Record<string, OptionColor>
 }): React.JSX.Element {
   const setNoteProperties = useStore((s) => s.setNoteProperties)
   const [editing, setEditing] = useState(false)
@@ -102,34 +125,22 @@ function EditableDataCell({
       </span>
     )
   }
+  // A Select needs no click-to-edit step: its chip IS the trigger for the menu.
+  if (type === 'select') {
+    return (
+      <SelectChip
+        value={typeof v === 'string' ? v : ''}
+        options={options}
+        colors={colors}
+        onCommit={commit}
+      />
+    )
+  }
   if (!editing) {
     return (
       <div className="db-cell-edit" title="Click to edit" onClick={() => setEditing(true)}>
-        {renderCell(row, col)}
+        {renderCell(row, col, colors)}
       </div>
-    )
-  }
-  if (type === 'select') {
-    const cur = typeof v === 'string' ? v : ''
-    const all = cur && !options.includes(cur) ? [cur, ...options] : options
-    return (
-      <select
-        className="db-cell-input"
-        autoFocus
-        value={cur}
-        onChange={(e) => {
-          commit(e.target.value)
-          done()
-        }}
-        onBlur={done}
-      >
-        <option value="">—</option>
-        {all.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
     )
   }
   if (type === 'date') {
@@ -295,14 +306,28 @@ export function BaseView({
   // Board: only a real frontmatter field can be reassigned by dragging a card.
   const BUILTIN_KEYS = ['name', 'backlinks', 'tags', 'cover']
   // Resolve each editable column's type/options once (from all rows) for consistent inline edits.
+  const schemas = useMemo(() => vaultPropSchemas(Object.values(parsed)), [parsed])
   const colMeta = useMemo(() => {
-    const meta: Record<string, { type: PropType; options: string[] }> = {}
+    const meta: Record<string, { type: PropType; options: string[]; colors: Record<string, OptionColor> }> = {}
     if (interactive)
       for (const c of cols)
-        if (!BUILTIN_KEYS.includes(c)) meta[c] = { type: columnType(all, c), options: columnOptions(all, c) }
+        if (!BUILTIN_KEYS.includes(c))
+          meta[c] = {
+            type: columnType(all, c, schemas),
+            options: columnOptions(all, c, schemas),
+            colors: columnColors(all, c, schemas)
+          }
     return meta
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [all, cols, interactive])
+  }, [all, cols, interactive, schemas])
+  // Option colours for EVERY column — a read-only embed, gallery or board paints its
+  // chips too, so this can't hang off `interactive` the way colMeta does.
+  const colColors = useMemo(() => {
+    const m: Record<string, Record<string, OptionColor>> = {}
+    for (const c of cols) if (!BUILTIN_KEYS.includes(c)) m[c] = columnColors(all, c, schemas)
+    return m
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, cols, schemas])
   const canDragBoard = interactive && !!base.groupKey && !BUILTIN_KEYS.includes(base.groupKey)
   const moveCardToColumn = (row: Row, columnKey: string): void => {
     if (!canDragBoard) return
@@ -347,7 +372,7 @@ export function BaseView({
             <div className="gallery-title">{row.name}</div>
             {fields.map((c) => (
               <div className="gallery-meta" key={c}>
-                {renderCell(row, c)}
+                {renderCell(row, c, colColors[c])}
               </div>
             ))}
           </div>
@@ -399,7 +424,7 @@ export function BaseView({
                     <div className="board-card-title">{row.name}</div>
                     {fields.map((c) => (
                       <div className="board-card-meta" key={c}>
-                        {renderCell(row, c)}
+                        {renderCell(row, c, colColors[c])}
                       </div>
                     ))}
                   </div>
@@ -481,9 +506,9 @@ export function BaseView({
                         }
                       >
                         {meta ? (
-                          <EditableDataCell row={row} col={c} type={meta.type} options={meta.options} />
+                          <EditableDataCell row={row} col={c} type={meta.type} options={meta.options} colors={meta.colors} />
                         ) : (
-                          renderCell(row, c)
+                          renderCell(row, c, colColors[c])
                         )}
                       </td>
                     )

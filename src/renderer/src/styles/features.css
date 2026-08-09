@@ -551,6 +551,363 @@ input[type='date'].prop-input {
   border-color: var(--accent-dim);
 }
 
+/* ---------- Row highlights (right-click a row) ---------- */
+/* A tinted band with a colour spine on the left, rather than coloured text: the
+   row keeps its normal reading contrast, and a coloured section still scans as
+   prose. Same nine tokens as the Select chips (lib/propColors). */
+.bl-row[data-color] {
+  --oc: var(--oc-gray);
+  background: color-mix(in srgb, var(--oc) 12%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--oc) 70%, transparent);
+  border-radius: 4px;
+}
+.bl-row[data-color='red'] {
+  --oc: var(--oc-red);
+}
+.bl-row[data-color='orange'] {
+  --oc: var(--oc-orange);
+}
+.bl-row[data-color='yellow'] {
+  --oc: var(--oc-yellow);
+}
+.bl-row[data-color='green'] {
+  --oc: var(--oc-green);
+}
+.bl-row[data-color='teal'] {
+  --oc: var(--oc-teal);
+}
+.bl-row[data-color='blue'] {
+  --oc: var(--oc-blue);
+}
+.bl-row[data-color='purple'] {
+  --oc: var(--oc-purple);
+}
+.bl-row[data-color='pink'] {
+  --oc: var(--oc-pink);
+}
+
+.color-pop {
+  position: fixed;
+  z-index: 400;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  padding: 8px 10px 6px;
+}
+.color-pop-head {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  color: var(--text-faint);
+  margin-bottom: 6px;
+}
+.color-pop-swatches {
+  display: flex;
+  gap: 5px;
+}
+.color-pop-swatches .opt-sw {
+  width: 17px;
+  height: 17px;
+}
+.color-pop-none {
+  margin-top: 7px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 6px;
+  text-align: left;
+}
+.color-pop-none:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* ---------- Quick task capture (⌘⇧T) ---------- */
+/* Sits high in the window rather than dead-centre: it's a capture bar, not a
+   dialogue, and the eye is already near the top when the shortcut is hit. */
+/* Top-aligned, unlike the centred modals this overlay is shared with. */
+.qt-overlay {
+  align-items: flex-start;
+}
+.qt-bar {
+  width: min(560px, calc(100vw - 48px));
+  margin-top: 12vh;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  padding: 14px 16px 12px;
+}
+.qt-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.qt-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.qt-date {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.qt-input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+}
+.qt-input:focus {
+  border-color: var(--accent-dim);
+}
+.qt-added {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.qt-added-row {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.qt-check {
+  color: var(--tag);
+}
+.qt-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+}
+.qt-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.qt-hint b {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.qt-open {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+.qt-open:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+/* ---------- Select properties: coloured option chips + their menu ---------- */
+/* One `--oc` hue drives text, tint and border, so a chip stays the same object
+   in the properties panel, a Bases cell, a gallery card and the menu. */
+.opt-chip {
+  --oc: var(--oc-gray);
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.5;
+  font-weight: 500;
+  color: var(--oc);
+  background: color-mix(in srgb, var(--oc) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--oc) 32%, transparent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.opt-chip[data-color='red'] {
+  --oc: var(--oc-red);
+}
+.opt-chip[data-color='orange'] {
+  --oc: var(--oc-orange);
+}
+.opt-chip[data-color='yellow'] {
+  --oc: var(--oc-yellow);
+}
+.opt-chip[data-color='green'] {
+  --oc: var(--oc-green);
+}
+.opt-chip[data-color='teal'] {
+  --oc: var(--oc-teal);
+}
+.opt-chip[data-color='blue'] {
+  --oc: var(--oc-blue);
+}
+.opt-chip[data-color='purple'] {
+  --oc: var(--oc-purple);
+}
+.opt-chip[data-color='pink'] {
+  --oc: var(--oc-pink);
+}
+/* An option with no colour chosen: a plain chip, not a grey "value". */
+.opt-chip[data-color='none'] {
+  color: var(--text);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+/* The trigger: shaped like .prop-input so a Select row lines up with its neighbours. */
+.sel-chip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-size: 13px;
+  text-align: left;
+}
+.sel-chip:hover {
+  border-color: var(--accent-dim);
+}
+.sel-caret {
+  color: var(--text-faint);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.sel-empty {
+  color: var(--text-faint);
+}
+/* In a Bases cell the chip is the content, so it drops the input chrome until hover. */
+.db-view .sel-chip {
+  background: transparent;
+  border-color: transparent;
+  padding: 1px 4px;
+}
+.db-view tr:hover .sel-chip {
+  border-color: var(--border);
+}
+
+.sel-menu {
+  position: fixed;
+  z-index: 400;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+}
+.sel-item {
+  padding: 4px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.sel-item:hover {
+  background: var(--bg-hover);
+}
+.sel-item.on {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Options editor (✎ on a Select row): one row per option — name, remove, swatches. */
+.opt-editor {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.opt-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.opt-name {
+  flex: 1;
+  min-width: 0;
+  padding: 3px 6px !important;
+}
+.opt-del {
+  opacity: 0.6;
+}
+.opt-row:hover .opt-del {
+  opacity: 1;
+}
+/* Sized so the whole palette fits one row in the 280px rightbar rather than
+   wrapping 7 + 2, which reads as two groups of colours. */
+.opt-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  width: 100%;
+}
+.opt-sw {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--oc) 55%, transparent);
+  background: var(--oc);
+  padding: 0;
+}
+.opt-sw[data-color='gray'] {
+  --oc: var(--oc-gray);
+}
+.opt-sw[data-color='red'] {
+  --oc: var(--oc-red);
+}
+.opt-sw[data-color='orange'] {
+  --oc: var(--oc-orange);
+}
+.opt-sw[data-color='yellow'] {
+  --oc: var(--oc-yellow);
+}
+.opt-sw[data-color='green'] {
+  --oc: var(--oc-green);
+}
+.opt-sw[data-color='teal'] {
+  --oc: var(--oc-teal);
+}
+.opt-sw[data-color='blue'] {
+  --oc: var(--oc-blue);
+}
+.opt-sw[data-color='purple'] {
+  --oc: var(--oc-purple);
+}
+.opt-sw[data-color='pink'] {
+  --oc: var(--oc-pink);
+}
+.opt-sw.on {
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px var(--oc);
+}
+.opt-add {
+  padding: 3px 6px !important;
+}
+.opt-done {
+  align-self: flex-end;
+}
+
 /* ===================================================================== */
 /* Search box + full-text results                                        */
 /* ===================================================================== */

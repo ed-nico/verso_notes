@@ -9,12 +9,82 @@
 /* ---------- App shell ---------- */
 .app {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  /* Width is a variable so dragging the handle repaints one custom property
+     instead of re-rendering the tree (App.tsx writes it). */
+  grid-template-columns: var(--sidebar-w, 260px) 1fr;
   height: 100%;
 }
 
 .app.full {
   grid-template-columns: 1fr;
+}
+
+/* Zen: the document and nothing else. Collapsing the grid column (rather than
+   just hiding .sidebar) is what lets the editor reclaim the space. */
+.app.zen {
+  grid-template-columns: 1fr;
+}
+.app.zen .tabstrip,
+.app.zen .rightbar,
+.app.zen .backlinks,
+/* The formatting bar goes too — ⌘B/⌘I/⌘E still work, and the point of Zen is
+   that nothing but the text is on screen. */
+.app.zen .fmt-bar {
+  display: none;
+}
+
+/* ---------- Panel resize handles ---------- */
+/* A 5px grab strip on the panel's inner edge, sitting just outside the border so
+   the panel's own scrollbar stays clickable. Invisible until hovered — the cursor
+   is the affordance; a permanent divider would be one more line on screen. */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 6;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.12s;
+}
+.resize-handle.left {
+  right: -2px;
+}
+.resize-handle.right {
+  left: -2px;
+}
+.resize-handle:hover,
+.resize-handle.on,
+.resize-handle:focus-visible {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+  outline: none;
+}
+/* During a drag the pointer leaves the 5px strip constantly; without this the
+   text under it selects and the cursor flickers back to a caret. */
+body.resizing-col {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* ---------- Zen exit ---------- */
+.zen-exit {
+  position: fixed;
+  top: 10px;
+  right: 14px;
+  z-index: 40;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 10px;
+  opacity: 0.12;
+  transition: opacity 0.15s;
+  -webkit-app-region: no-drag;
+}
+.zen-exit:hover {
+  opacity: 1;
+  color: var(--text);
 }
 
 /* ---------- Welcome ---------- */
@@ -65,6 +135,8 @@
 .sidebar {
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
+  /* Anchors the .resize-handle pinned to its inner edge. */
+  position: relative;
   display: flex;
   flex-direction: column;
   overflow: hidden;

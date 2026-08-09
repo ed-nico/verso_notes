@@ -7,6 +7,16 @@ import { parseLooseDate } from '../lib/dates'
 import { resolveTarget } from '../lib/links'
 import { ContextMenu } from './ContextMenu'
 import { renderInline } from './InlineMarkdown'
+import { SelectChip } from './SelectChip'
+import { vaultPropSchemas, withOptions } from '../lib/propSchema'
+import {
+  OPTION_COLORS,
+  optionColors,
+  renameOption,
+  seedColors,
+  withOptionColors,
+  type OptionColor
+} from '../lib/propColors'
 import {
   buildSupertagIndex,
   fieldsForNote,
@@ -219,54 +229,81 @@ function LinkyValue({
   )
 }
 
-/** A user-defined Select property: pick a value from a dropdown of options the user
- *  manages inline (✎ toggles a comma-separated options editor). */
+/** A user-defined Select property: pick a value from a dropdown of coloured options
+ *  the user manages inline (✎ toggles the options editor — rename, recolour, remove). */
 function UserSelectEditor({
   value,
   options,
+  colors,
   onCommit,
-  onEditOptions
+  onAddOption,
+  onRenameOption,
+  onRemoveOption,
+  onSetColor
 }: {
   value: unknown
   options: string[]
+  colors: Record<string, OptionColor>
   onCommit: (v: string) => void
-  onEditOptions: (options: string[]) => void
+  onAddOption: (name: string) => void
+  onRenameOption: (from: string, to: string) => void
+  onRemoveOption: (name: string) => void
+  onSetColor: (name: string, color: OptionColor) => void
 }): React.JSX.Element {
   const [editing, setEditing] = useState(options.length === 0) // open straight to setup when empty
   const current = typeof value === 'string' ? value : ''
   if (editing) {
     return (
-      <div className="prop-date">
+      <div className="opt-editor">
+        {options.map((o) => (
+          <div className="opt-row" key={o}>
+            <input
+              className="prop-input opt-name"
+              defaultValue={o}
+              onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+              onBlur={(e) => {
+                const to = e.currentTarget.value.trim()
+                if (to && to !== o) onRenameOption(o, to)
+                else e.currentTarget.value = o
+              }}
+            />
+            <button className="prop-del opt-del" title="Remove option" onClick={() => onRemoveOption(o)}>
+              ✕
+            </button>
+            <div className="opt-swatches">
+              {OPTION_COLORS.map((c) => (
+                <button
+                  key={c}
+                  className={'opt-sw' + (colors[o] === c ? ' on' : '')}
+                  data-color={c}
+                  title={c}
+                  onClick={() => onSetColor(o, c)}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
         <input
-          className="prop-input"
-          autoFocus
-          defaultValue={options.join(', ')}
-          placeholder="option, option, …"
-          onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-          onBlur={(e) => {
-            const next = [...new Set(e.currentTarget.value.split(',').map((s) => s.trim()).filter(Boolean))]
-            onEditOptions(next)
-            setEditing(false)
+          className="prop-input opt-add"
+          autoFocus={options.length === 0}
+          placeholder="add option…"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              const v = e.currentTarget.value.trim()
+              if (v) onAddOption(v)
+              e.currentTarget.value = ''
+            } else if (e.key === 'Escape') setEditing(false)
           }}
         />
-        <button className="prop-jump" title="Done editing options" onClick={() => setEditing(false)}>
-          ✓
+        <button className="prop-jump opt-done" title="Done editing options" onClick={() => setEditing(false)}>
+          ✓ Done
         </button>
       </div>
     )
   }
-  // Keep an off-list current value visible so changing options never hides existing data.
-  const all = current && !options.includes(current) ? [current, ...options] : options
   return (
     <div className="prop-date">
-      <select className="prop-input" value={current} onChange={(e) => onCommit(e.target.value)}>
-        <option value="">—</option>
-        {all.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
+      <SelectChip value={current} options={options} colors={colors} onCommit={onCommit} />
       <button className="prop-jump" title="Edit options" onClick={() => setEditing(true)}>
         ✎
       </button>
@@ -281,6 +318,7 @@ export function ValueEditor({
   type,
   value,
   options,
+  colors,
   onCommit,
   onOpenDate,
   onOpenNote,
@@ -289,6 +327,7 @@ export function ValueEditor({
   type: FieldType
   value: unknown
   options?: string[]
+  colors?: Record<string, OptionColor>
   onCommit: (v: unknown) => void
   onOpenDate: (iso: string) => void
   onOpenNote?: (name: string) => void
@@ -296,18 +335,12 @@ export function ValueEditor({
 }): React.JSX.Element {
   if (type === 'select') {
     return (
-      <select
-        className="prop-input"
+      <SelectChip
         value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onCommit(e.target.value)}
-      >
-        <option value="">—</option>
-        {(options ?? []).map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
+        options={options ?? []}
+        colors={colors}
+        onCommit={onCommit}
+      />
     )
   }
   if (type === 'url') {
@@ -488,49 +521,69 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
     data._types && typeof data._types === 'object' && !Array.isArray(data._types)
       ? (data._types as Record<string, unknown>)
       : {}
+  // Select vocabularies defined anywhere in the vault, so one note can type a
+  // property that a thousand notes carry (lib/propSchema).
+  const schemas = useMemo(() => vaultPropSchemas(Object.values(parsed)), [parsed])
   const effType = (key: string): PropType => {
     const t = storedTypes[key]
-    return typeof t === 'string' && PROP_TYPES.some((p) => p.value === t) ? (t as PropType) : typeOf(data[key])
+    if (typeof t === 'string' && PROP_TYPES.some((p) => p.value === t)) return t as PropType
+    // An inherited option list makes it a Select here too — that's what inheriting means.
+    return schemas[key] ? 'select' : typeOf(data[key])
   }
-  // User-defined Select options, kept per-property in a hidden `_options` map.
+  // User-defined Select options, kept per-property in a hidden `_options` map —
+  // this note's own if it has one, else the vault's.
   const storedOptions: Record<string, unknown> =
     data._options && typeof data._options === 'object' && !Array.isArray(data._options)
       ? (data._options as Record<string, unknown>)
       : {}
-  const optionsFor = (key: string): string[] =>
+  const localOptions = (key: string): string[] =>
     Array.isArray(storedOptions[key]) ? (storedOptions[key] as unknown[]).map(String) : []
-  /** Write back the `_options` map with `key` set (or cleared when empty). */
-  const withOptions = (
-    base: Record<string, unknown>,
-    key: string,
-    options: string[]
-  ): Record<string, unknown> => {
-    const opts = { ...storedOptions }
-    if (options.length) opts[key] = options
-    else delete opts[key]
-    const next = { ...base }
-    if (Object.keys(opts).length) next._options = opts
-    else delete next._options
-    return next
+  const optionsFor = (key: string): string[] => {
+    const own = localOptions(key)
+    return own.length ? own : (schemas[key]?.options ?? [])
   }
+  // Per-option colours, kept in the parallel hidden `_colors` map (lib/propColors).
+  const colorsFor = (key: string): Record<string, OptionColor> =>
+    localOptions(key).length ? optionColors(data, key) : (schemas[key]?.colors ?? {})
+  /** The note a Select's options belong to: this one if it defines them, else
+   *  wherever the vault defines them — so editing options updates the shared
+   *  definition rather than forking a private copy into this note. */
+  const optionsHome = (key: string): string =>
+    localOptions(key).length ? path : (schemas[key]?.from ?? path)
 
   const update = (key: string, value: unknown): void => {
     void setNoteProperties(path, { ...data, [key]: value })
   }
-  const setOptions = (key: string, options: string[]): void => {
-    void setNoteProperties(path, withOptions(data, key, options))
+  /** Write a Select's options and their colours in ONE frontmatter update — two
+   *  writes would race through `queueWrite` with a half-updated `_colors` map.
+   *  The schema goes to its home note; `value` is this note's own and stays here. */
+  const setOptions = (
+    key: string,
+    options: string[],
+    colors: Record<string, OptionColor>,
+    value?: string
+  ): void => {
+    const home = optionsHome(key)
+    const homeFm = home === path ? data : getFrontmatter(useStore.getState().texts[home] ?? '')
+    let next = withOptions(homeFm, key, options)
+    next = withOptionColors(next, key, options.length ? colors : {})
+    if (value !== undefined && home === path) next[key] = value
+    void setNoteProperties(home, next)
+    if (value !== undefined && home !== path) void setNoteProperties(path, { ...data, [key]: value })
   }
   /** Change a property's type — coerce the value, and remember the choice when inference can't. */
   const changeType = (key: string, t: PropType): void => {
     const coerced = coerceTo(data[key], t)
     const types = { ...storedTypes }
-    if (t !== typeOf(coerced)) types[key] = t
+    // Also remember the choice when an inherited vault schema would otherwise
+    // re-assert Select over it — inference alone can't out-vote the schema.
+    if (t !== typeOf(coerced) || schemas[key]) types[key] = t
     else delete types[key]
     let next: Record<string, unknown> = { ...data, [key]: coerced }
     if (Object.keys(types).length) next._types = types
     else delete next._types
-    // Options only belong to Select — drop them when switching to another type.
-    if (t !== 'select') next = withOptions(next, key, [])
+    // Options and their colours only belong to Select — drop both otherwise.
+    if (t !== 'select') next = withOptionColors(withOptions(next, key, []), key, {})
     void setNoteProperties(path, next)
   }
   const remove = (key: string): void => {
@@ -542,7 +595,7 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
       if (Object.keys(types).length) next._types = types
       else delete next._types
     }
-    next = withOptions(next, key, [])
+    next = withOptionColors(withOptions(next, key, []), key, {})
     void setNoteProperties(path, next)
   }
   const openDate = (iso: string): void => void ensureDailyNote(iso).then(openNote)
@@ -640,8 +693,36 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
                   <UserSelectEditor
                     value={data[key]}
                     options={optionsFor(key)}
+                    colors={colorsFor(key)}
                     onCommit={(v) => update(key, v)}
-                    onEditOptions={(o) => setOptions(key, o)}
+                    onAddOption={(name) => {
+                      const opts = optionsFor(key)
+                      if (opts.includes(name)) return
+                      const next = [...opts, name]
+                      setOptions(key, next, seedColors(next, colorsFor(key)))
+                    }}
+                    onRenameOption={(from, to) => {
+                      const next = optionsFor(key).map((o) => (o === from ? to : o))
+                      // The stored value is the option NAME, so a rename has to carry it.
+                      setOptions(
+                        key,
+                        next,
+                        renameOption(colorsFor(key), from, to),
+                        data[key] === from ? to : undefined
+                      )
+                    }}
+                    onRemoveOption={(name) => {
+                      const next = optionsFor(key).filter((o) => o !== name)
+                      setOptions(
+                        key,
+                        next,
+                        seedColors(next, colorsFor(key)),
+                        data[key] === name ? '' : undefined
+                      )
+                    }}
+                    onSetColor={(name, color) =>
+                      setOptions(key, optionsFor(key), { ...seedColors(optionsFor(key), colorsFor(key)), [name]: color })
+                    }
                   />
                 ) : (
                   <ValueEditor type={t} value={data[key]} onCommit={(v) => update(key, v)} onOpenDate={openDate} inline={inline} />

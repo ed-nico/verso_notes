@@ -26,6 +26,8 @@ import { Help } from './components/Help'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { LinkPreview } from './components/LinkPreview'
 import { ContextMenu } from './components/ContextMenu'
+import { ResizeHandle } from './components/ResizeHandle'
+import { QuickTask } from './components/QuickTask'
 import { noteStats } from './lib/stats'
 import { REVEAL_LABEL } from './lib/platform'
 
@@ -290,8 +292,12 @@ function RightSidebar(): React.JSX.Element {
   const ensureDailyNote = useStore((s) => s.ensureDailyNote)
   const openNote = useStore((s) => s.openNote)
 
+  const rightbarWidth = useStore((s) => s.rightbarWidth)
+  const setRightbarWidth = useStore((s) => s.setRightbarWidth)
+
   return (
     <aside className="rightbar">
+      <ResizeHandle side="right" width={rightbarWidth} onResize={setRightbarWidth} label="Resize right panel" />
       <Calendar onPick={(iso) => void ensureDailyNote(iso).then(openNote)} />
       {view === 'journal' && <OnThisDay />}
       {view === 'editor' && activePath && (
@@ -365,6 +371,17 @@ export function App(): React.JSX.Element {
   const customCss = useStore((s) => s.customCss)
   const editorFont = useStore((s) => s.editorFont)
   const editorFontSize = useStore((s) => s.editorFontSize)
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const rightbarWidth = useStore((s) => s.rightbarWidth)
+  const zen = useStore((s) => s.zen)
+
+  // Panel widths ride on CSS variables (same pattern as the accent and the editor
+  // font) so a drag repaints one custom property instead of re-rendering the tree.
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--sidebar-w', `${sidebarWidth}px`)
+    root.style.setProperty('--rightbar-w', `${rightbarWidth}px`)
+  }, [sidebarWidth, rightbarWidth])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -468,12 +485,21 @@ export function App(): React.JSX.Element {
       } else if (e.key === 'w' && !typing && s.sidePanes.length) {
         e.preventDefault()
         s.closeSidePane()
+      } else if (e.code === 'Backslash' && e.altKey) {
+        // Third of the panel family: ⌘\ sidebar, ⌘⇧\ right panel, ⌘⌥\ everything.
+        e.preventDefault()
+        s.toggleZen()
       } else if (e.code === 'Backslash' && e.shiftKey) {
         e.preventDefault()
         s.toggleRightbar()
       } else if (e.key === '\\') {
         e.preventDefault()
         s.toggleSidebar()
+      } else if ((e.key === 't' || e.key === 'T') && e.shiftKey) {
+        // Quick capture: deliberately NOT gated on `typing` — dropping a task into
+        // today mid-sentence, from anywhere, is the whole point.
+        e.preventDefault()
+        s.openModal('task')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -483,18 +509,41 @@ export function App(): React.JSX.Element {
   if (!workspace) return <Welcome />
 
   return (
-    <div className={'app' + (sidebarOpen ? '' : ' sidebar-closed')}>
+    <div className={'app' + (sidebarOpen ? '' : ' sidebar-closed') + (zen ? ' zen' : '')}>
       {/* Hidden, not unmounted — ⌘\ must not reset folder expansion, the search
           query, or the scroll position every time the sidebar is re-shown. */}
-      <div style={{ display: sidebarOpen ? 'contents' : 'none' }}>
+      <div style={{ display: sidebarOpen && !zen ? 'contents' : 'none' }}>
         <Sidebar />
       </div>
       <MainArea />
+      {zen && <ZenExit />}
       <LinkPreview />
       <CommandPalette />
       <Modals />
       <SaveErrorToast />
     </div>
+  )
+}
+
+/** The way out of Zen. Faded until the pointer nears it, because a permanent
+ *  button in the corner is exactly the chrome Zen was asked to remove — but a mode
+ *  with no visible exit is a trap, and Escape alone isn't discoverable. */
+function ZenExit(): React.JSX.Element {
+  const toggleZen = useStore((s) => s.toggleZen)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      // Only when nothing else owns Escape — a find bar or popup gets it first.
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      if ((e.target as HTMLElement | null)?.closest?.('input, textarea')) return
+      toggleZen()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [toggleZen])
+  return (
+    <button className="zen-exit" onClick={() => toggleZen()} title="Leave Zen mode (esc · ⌘⌥\)">
+      ✕ Zen
+    </button>
   )
 }
 
@@ -519,6 +568,7 @@ function Modals(): React.JSX.Element | null {
   const activePath = useStore((s) => s.activePath)
   if (modal === 'settings') return <Settings onClose={closeModal} />
   if (modal === 'help') return <Help onClose={closeModal} />
+  if (modal === 'task') return <QuickTask onClose={closeModal} />
   if (modal === 'compile' && activePath) return <CompileView path={activePath} onClose={closeModal} />
   return null
 }

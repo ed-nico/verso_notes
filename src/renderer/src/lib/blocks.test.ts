@@ -13,6 +13,39 @@ describe('parseBlocks / serializeBlocks round trip', () => {
     expect(roundTrip(text)).toBe(text)
   })
 
+  it('preserves row colours on bullets, headings, paragraphs and quotes', () => {
+    const text =
+      '# Title %%color:red%%\n\n- item one %%color:green%%\n- plain item\n\na paragraph %%color:blue%%\n\n> quoted %%color:teal%%\n'
+    expect(roundTrip(text)).toBe(text)
+  })
+
+  it('keeps the colour marker out of the editable text', () => {
+    const { blocks } = parseBlocks('- slept badly %%color:orange%%\n')
+    expect(blocks[0].text).toBe('slept badly')
+    expect(blocks[0].color).toBe('orange')
+  })
+
+  it('carries a colour and an anchor on the same line', () => {
+    const text = '- item %%color:green%% ^abc123\n'
+    const { blocks } = parseBlocks(text)
+    expect(blocks[0].text).toBe('item')
+    expect(blocks[0].color).toBe('green')
+    expect(blocks[0].anchor).toBe('abc123')
+    expect(roundTrip(text)).toBe(text)
+  })
+
+  it('leaves an unknown colour name as ordinary text', () => {
+    const { blocks } = parseBlocks('- item %%color:chartreuse%%\n')
+    expect(blocks[0].color).toBeUndefined()
+    expect(blocks[0].text).toBe('item %%color:chartreuse%%')
+  })
+
+  it('does not treat a code block’s body as a colour marker', () => {
+    const text = '```\nconst x = "%%color:red%%"\n```\n'
+    expect(roundTrip(text)).toBe(text)
+    expect(parseBlocks(text).blocks[0].color).toBeUndefined()
+  })
+
   it('keeps the anchor out of the editable text', () => {
     const { blocks } = parseBlocks('- item one ^abc123\n')
     expect(blocks[0].text).toBe('item one')

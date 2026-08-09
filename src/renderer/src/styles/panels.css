@@ -265,6 +265,21 @@ html[data-theme='paper'] {
   --shadow-lg: 0 6px 16px rgba(58, 44, 26, 0.1), 0 24px 52px rgba(58, 44, 26, 0.17);
 }
 
+/* Option-chip hues for the LIGHT themes (light and paper both): the dark set is
+   too pale to read as text on a near-white or cream page, so each hue is taken
+   down to a mid tone that still passes as its colour at 12px. */
+html:is([data-theme='light'], [data-theme='paper']) {
+  --oc-gray: #6b6b74;
+  --oc-red: #c23b3b;
+  --oc-orange: #b0640d;
+  --oc-yellow: #8a7311;
+  --oc-green: #1f7d55;
+  --oc-teal: #147d78;
+  --oc-blue: #3457b8;
+  --oc-purple: #6f47b8;
+  --oc-pink: #ad3a7c;
+}
+
 /* Paper grain — a tiling fractal-noise tile at very low contrast, so the writing
    surface has the tooth of stock rather than reading as flat cream.
    Deliberately on .scroll-area (the writing surface) and NOT as a full-window

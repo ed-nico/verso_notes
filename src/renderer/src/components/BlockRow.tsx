@@ -39,6 +39,8 @@ export interface RowApi {
   /** Zoom into a list item (bullet/number click) and start editing it. */
   zoomInto: (id: number) => void
   applyItem: (id: number, item: AcSuggestion) => void
+  /** Right-click a row: opens the highlight palette. */
+  onRowContextMenu: (b: Block, e: React.MouseEvent) => void
   renderRich: (b: Block, tableWidths?: number[]) => React.ReactNode
   renderHighlighted: (b: Block, m: FindMatch) => React.ReactNode
   /** The editing surface: TableEditor for tables, the autosizing textarea otherwise. */
@@ -135,7 +137,9 @@ export const BlockRow = React.memo(function BlockRow({
           (isEditing ? '' : ' bl-cv')
         }
         data-block-id={b.id}
+        data-color={b.color}
         style={{ paddingLeft: depth * 24 }}
+        onContextMenu={(e) => h.onRowContextMenu(b, e)}
       >
         <span
           className="ol-fold"

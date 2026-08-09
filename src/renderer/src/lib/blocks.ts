@@ -5,6 +5,8 @@
  * moves it. Serializes to clean Markdown (nested bullets via indentation).
  */
 
+import { OPTION_COLORS, type OptionColor } from './propColors'
+
 type BlockType = 'paragraph' | 'heading' | 'bullet' | 'task' | 'code' | 'quote' | 'table'
 
 export interface Block {
@@ -23,6 +25,8 @@ export interface Block {
   fence?: '`' | '~'
   /** Obsidian-style `^block-anchor` id, kept out of the editable text but re-appended on save. */
   anchor?: string
+  /** Row highlight colour (`%%color:…%%`), kept out of the editable text like `anchor`. */
+  color?: OptionColor
   collapsed: boolean
 }
 
@@ -33,6 +37,18 @@ function nextId(): number {
 
 /** An Obsidian-style `^anchor` marker — hidden from the editable text, preserved on save. */
 const ANCHOR_RE = /\s\^([A-Za-z0-9][A-Za-z0-9-]*)\s*$/
+
+/**
+ * A row's highlight colour, carried on the line itself as `%%color:green%%`.
+ *
+ * Handled exactly like `^anchor`: stripped out of the editable text on parse, put
+ * back on save. It lives in the LINE rather than in a frontmatter map keyed by
+ * block position because position is not an identity — inserting a paragraph above
+ * would silently repaint every colour below it, and an edit made in another app
+ * would drift the whole map. `%%…%%` is Obsidian's comment syntax, so the marker
+ * stays invisible there too instead of leaking into the prose.
+ */
+const COLOR_RE = /\s*%%color:([a-z]+)%%\s*$/
 
 export function makeBlock(partial: Partial<Block> = {}): Block {
   return { id: nextId(), type: 'paragraph', text: '', level: 0, collapsed: false, ...partial }
@@ -215,6 +231,13 @@ export function parseBlocks(text: string): ParsedDoc {
       b.anchor = m[1]
       b.text = b.text.replace(ANCHOR_RE, '')
     }
+    // After the anchor: colour is written INSIDE it (`text %%color:x%% ^id`), so
+    // by now the marker is at the end of the line again.
+    const c = b.text.match(COLOR_RE)
+    if (c && (OPTION_COLORS as readonly string[]).includes(c[1])) {
+      b.color = c[1] as OptionColor
+      b.text = b.text.replace(COLOR_RE, '')
+    }
   }
 
   return { blocks, frontmatter }
@@ -225,11 +248,14 @@ export function parseBlocks(text: string): ParsedDoc {
 // ---------------------------------------------------------------------------
 
 function serializeBlock(b: Block, ordinal?: number): string {
-  // A preserved `^anchor` goes back at the very end of the block's markdown.
-  const anchor = b.anchor && b.type !== 'code' && b.type !== 'table' ? ` ^${b.anchor}` : ''
+  // A preserved `^anchor` goes back at the very end of the block's markdown, with
+  // the colour marker just inside it (parse peels them off in that order).
+  const meta = b.type === 'code' || b.type === 'table' ? '' : (b.color ? ` %%color:${b.color}%%` : '')
+  const anchor = (b.anchor && b.type !== 'code' && b.type !== 'table' ? ` ^${b.anchor}` : '')
+  const tail = meta + anchor
   switch (b.type) {
     case 'heading':
-      return `${'#'.repeat(b.level || 1)} ${b.text}${anchor}`
+      return `${'#'.repeat(b.level || 1)} ${b.text}${tail}`
     case 'code': {
       const f = (b.fence ?? '`').repeat(3)
       return `${f}${b.lang ?? ''}\n${b.text}\n${f}`
@@ -241,17 +267,17 @@ function serializeBlock(b: Block, ordinal?: number): string {
       return b.text
         .split('\n')
         .map((l) => (l === '' ? '>' : `> ${l}`))
-        .join('\n') + anchor
+        .join('\n') + tail
     case 'bullet':
     case 'task': {
       const pad = '  '.repeat(b.level)
       const marker =
         b.type === 'task' ? `- [${b.checked ? 'x' : ' '}] ` : b.ordered ? `${ordinal ?? b.ordinal ?? 1}. ` : '- '
       const [first, ...rest] = b.text.split('\n')
-      return [`${pad}${marker}${first}`, ...rest.map((l) => `${pad}  ${l}`)].join('\n') + anchor
+      return [`${pad}${marker}${first}`, ...rest.map((l) => `${pad}  ${l}`)].join('\n') + tail
     }
     default:
-      return b.text + anchor
+      return b.text + tail
   }
 }
 

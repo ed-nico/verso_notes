@@ -701,8 +701,10 @@ mark.tok-mark {
 
 /* ---------- Right sidebar (properties / calendar) ---------- */
 .rightbar {
-  width: 280px;
+  width: var(--rightbar-w, 280px);
   flex-shrink: 0;
+  /* Anchors the .resize-handle pinned to its inner edge. */
+  position: relative;
   border-left: 1px solid var(--border);
   background: var(--bg-panel);
   overflow-y: auto;

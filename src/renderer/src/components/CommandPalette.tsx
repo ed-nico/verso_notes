@@ -24,6 +24,7 @@ export function CommandPalette(): React.JSX.Element | null {
   const openTag = useStore((s) => s.openTag)
   const openModal = useStore((s) => s.openModal)
   const toggleTheme = useStore((s) => s.toggleTheme)
+  const toggleZen = useStore((s) => s.toggleZen)
   const newFromTemplate = useStore((s) => s.newFromTemplate)
   const reloadVault = useStore((s) => s.reloadVault)
 
@@ -63,6 +64,13 @@ export function CommandPalette(): React.JSX.Element | null {
         icon: '▤',
         run: () => act(() => void newFromTemplate(t.path))
       })),
+      {
+        id: 'task-today',
+        label: 'Add a task to today (⌘⇧T)',
+        icon: '✓',
+        run: () => act(() => openModal('task'))
+      },
+      { id: 'zen', label: 'Zen mode — hide everything but the note (⌘⌥\\)', icon: '◻', run: () => act(() => toggleZen()) },
       { id: 'journal', label: 'Open Journal (⌘D)', icon: '☼', run: () => act(() => openView('journal')) },
       { id: 'todos', label: 'Open Todos', icon: '✓', run: () => act(() => openView('todos')) },
       { id: 'graph', label: 'Open Graph', icon: '⦿', run: () => act(() => openView('graph')) },

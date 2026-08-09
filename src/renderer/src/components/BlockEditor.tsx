@@ -12,6 +12,8 @@ import { parseVideoUrl, formatTimestamp, videoKey } from '../lib/video'
 import { activePlayerKey, currentTime } from '../lib/videobus'
 import { renderInline } from './InlineMarkdown'
 import { BlockRow, type AcSuggestion, type FindMatch, type RowApi } from './BlockRow'
+import { ColorPalette } from './ColorPalette'
+import type { OptionColor } from '../lib/propColors'
 import { useBlockDrag } from './useBlockDrag'
 import { useFindReplace } from './useFindReplace'
 import type { CaretPos, PendingCaret } from './caret'
@@ -264,6 +266,13 @@ export function BlockEditor({
   const [qb, setQb] = useState<{ id: number; initial: string } | null>(null)
   // Block-level multi-selection (whole bullets, not text within one).
   const [selIds, setSelIds] = useState<Set<number>>(() => new Set())
+  // The row-highlight palette: where it sits, and which rows it will paint.
+  const [colorPop, setColorPop] = useState<{
+    x: number
+    y: number
+    ids: number[]
+    current?: OptionColor
+  } | null>(null)
   const pendingCaret = useRef<PendingCaret | null>(null)
   // Set by ⌘⇧V (paste-as-is): the next paste skips markdown→block parsing and inserts
   // the clipboard text verbatim into the current field.
@@ -1087,6 +1096,28 @@ export function BlockEditor({
     } else {
       patchById(b.id, { type: 'heading', level: kind, ordered: undefined, checked: undefined }, caret)
     }
+  }
+
+  /** Paint (or clear) the highlight on rows. Multi-select paints the lot, so a
+   *  whole section can be marked in one go. */
+  const setRowColor = (ids: number[], color: OptionColor | null): void => {
+    const next = cloneBlocks(blocks)
+    let hit = false
+    for (const b of next) {
+      if (!ids.includes(b.id) || b.type === 'code' || b.type === 'table') continue
+      b.color = color ?? undefined
+      hit = true
+    }
+    if (hit) commit(next, `color:${++opSeq.current}`)
+  }
+
+  /** Right-click a row → the highlight palette. Acts on the whole selection when
+   *  the clicked row is part of it, otherwise on just that row. */
+  const onRowContextMenu = (b: Block, e: React.MouseEvent): void => {
+    if (b.type === 'code' || b.type === 'table') return
+    e.preventDefault()
+    const ids = selIds.has(b.id) ? [...selIds] : [b.id]
+    setColorPop({ x: e.clientX, y: e.clientY, ids, current: b.color })
   }
 
   const insertAfter = (id: number, before: string, after: string): void => {
@@ -1975,6 +2006,7 @@ export function BlockEditor({
       zoomInto(id)
     },
     applyItem,
+    onRowContextMenu,
     renderRich,
     renderHighlighted,
     renderEditing,
@@ -2186,6 +2218,19 @@ export function BlockEditor({
         <div
           className="ol-drop-line"
           style={{ top: dropHint.top, left: dropHint.left, width: dropHint.width }}
+        />
+      )}
+      {colorPop && (
+        <ColorPalette
+          x={colorPop.x}
+          y={colorPop.y}
+          current={colorPop.current}
+          count={colorPop.ids.length}
+          onPick={(c) => {
+            setRowColor(colorPop.ids, c)
+            setColorPop(null)
+          }}
+          onClose={() => setColorPop(null)}
         />
       )}
       {entityPop && (

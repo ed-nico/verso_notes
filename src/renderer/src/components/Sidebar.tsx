@@ -5,6 +5,7 @@ import { searchNotes } from '../lib/search'
 import { supertagsFromParsed } from '../lib/supertags'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { VaultSwitcher } from './VaultSwitcher'
+import { ResizeHandle } from './ResizeHandle'
 import { NOTE_DND_MIME } from '../lib/canvas'
 import { REVEAL_LABEL } from '../lib/platform'
 import type { NoteFile } from '@shared/types'
@@ -82,6 +83,8 @@ export function Sidebar(): React.JSX.Element {
   // which would otherwise rebuild the whole file tree as you type.
   const structSig = useStore((s) => structSigOf(s.files, s.parsed))
   const activePath = useStore((s) => s.activePath)
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const setSidebarWidth = useStore((s) => s.setSidebarWidth)
   const view = useStore((s) => s.view)
   const vaultLoading = useStore((s) => s.vaultLoading)
   const loadedCount = useStore((s) => s.loadedCount)
@@ -372,6 +375,7 @@ export function Sidebar(): React.JSX.Element {
 
   return (
     <div className="sidebar">
+      <ResizeHandle side="left" width={sidebarWidth} onResize={setSidebarWidth} label="Resize sidebar" />
       {/* Draggable strip clears the macOS traffic-lights; the vault switcher opts out of drag. */}
       <div className="sidebar-header">
         <VaultSwitcher />

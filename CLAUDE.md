@@ -115,6 +115,15 @@ Key invariants and patterns:
   steps) plus any number of right-hand splits (`sidePanes: SidePane[]` — cmd-clicked notes /
   open PDFs; `closeSidePane(i?)` closes one). `view` switches the main pane between the
   editor and the graph/bases/journal/todos/assets/tags screens.
+- Chrome: `sidebarWidth` / `rightbarWidth` (drag a panel's inner edge —
+  `components/ResizeHandle.tsx`; clamped on READ as well as write, so a stale width can't
+  strand a handle off-screen) persist in localStorage and reach the layout as the
+  `--sidebar-w` / `--rightbar-w` CSS variables, so a drag repaints one custom property instead
+  of re-rendering the tree. `zen` (⌘⌥\, the third of ⌘\ / ⌘⇧\ / ⌘⌥\) hides every panel, the
+  top bar and the format bar; it is session-only ON PURPOSE — booting into a chromeless
+  window just looks broken. `addTaskToToday` is ⌘⇧T quick capture
+  (`components/QuickTask.tsx`), writing through to disk immediately rather than via the 600ms
+  debounce, since capture is used mid-thought and abandoned.
 - Appearance: `theme` (`ThemeName`: dark / paper / light) + `accent` (see `ACCENTS`) live in
   localStorage; `customCss` mirrors the vault's `.verso/custom.css` and is injected/hot-reloaded
   by App.tsx. **Paper is a LIGHT theme** (warm cream, `html[data-theme='paper']` in
@@ -149,9 +158,16 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   next textarea mounts (it can't be placed at the call site — the element doesn't exist yet).
 - **`lib/blocks.ts`** — block model: parse/serialize markdown ↔ `Block[]`, indentation,
   shortcut detection, visible/foldable logic. The editor's data layer. Round-trips preserve
-  `^block-anchor` markers (`Block.anchor`) and ordered-list numbering (`Block.ordinal`).
+  `^block-anchor` markers (`Block.anchor`), row highlights (`Block.color`) and ordered-list
+  numbering (`Block.ordinal`).
   Consecutive `>` lines fold into ONE `quote` block with the markers stripped (a bare `>` is a
   blank line inside it), so a callout's whole body is a single block.
+  A row's colour rides on the LINE as a trailing `%%color:green%%` (stripped on parse,
+  re-appended on save, just inside any `^anchor`) — deliberately not a frontmatter map keyed
+  by block position, because position isn't identity: inserting a paragraph would repaint
+  every colour below it, and an external edit would drift the whole map. `%%…%%` is
+  Obsidian's comment syntax, so the marker stays invisible there too. Right-click a row for
+  `components/ColorPalette.tsx`; the colours are `propColors`' tokens, shared with Select chips.
 - **`components/MermaidBlock.tsx`** + **`lib/mermaid.ts`** — a ```` ```mermaid ```` fence
   renders as a diagram instead of code (dispatched from `renderRich`'s `code` branch on
   `Block.lang`). `renderMermaid` is the ONE seam to the engine: it lazy-imports `mermaid`,
@@ -235,6 +251,17 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   Bases page (`BasesView`, interactive) and inline `{{base <name> [limit:N] [layout:…]}}`
   embeds (`BaseEmbed`, read-only). Templates are derived live from the `Templates/` folder
   (`templatesFromFiles`) — there is no `listTemplates` IPC.
+- **`propColors.ts` + `propSchema.ts`** — coloured Select properties. A Select's options live
+  in the hidden `_options` frontmatter map and their colours in the parallel `_colors` one;
+  the nine colour names are TOKENS, mapped to `--oc-*` variables per theme in
+  `styles/panels.css`, never CSS colours. **A property defined ANYWHERE in the vault is
+  defined EVERYWHERE** (`vaultPropSchemas`): one note carries the option list and every note
+  with that property inherits the dropdown, so a `Sleep` on a thousand daily notes isn't a
+  thousand copies of its vocabulary. Keyed off `_options` alone, never `_types` — propagating
+  a bare type would let one note calling its `Status` a Date retype every other note's.
+  Editing options from an inheriting note writes back to the DEFINING note (`optionsHome`),
+  which is what stops copies drifting. `components/SelectChip.tsx` is the one dropdown widget
+  (not a native `<select>`: macOS ignores per-`<option>` colours).
 
 ### Typed tags ("supertags") — `src/renderer/src/lib/supertags.ts`
 
