@@ -115,7 +115,7 @@ body.resizing-col {
   background: var(--accent);
   color: white;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 10px 18px;
   font-size: 14px;
   font-weight: 500;
@@ -161,7 +161,7 @@ body.resizing-col {
   padding: 4px 6px;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
@@ -189,7 +189,7 @@ body.resizing-col {
   max-width: 320px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 4px;
   box-shadow: var(--shadow-md);
 }
@@ -273,7 +273,7 @@ body.resizing-col {
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   padding: 6px 10px;
   font-size: 13px;
@@ -287,8 +287,9 @@ body.resizing-col {
   color: var(--text);
 }
 .nav-item.active {
-  background: var(--accent-dim);
-  color: white;
+  background: var(--sel-bg);
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* Pinned footer (Help / Settings) */
@@ -303,7 +304,7 @@ body.resizing-col {
   flex: 1;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   padding: 6px 8px;
   font-size: 12px;
@@ -317,7 +318,7 @@ body.resizing-col {
 .icon-btn {
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   padding: 5px 9px;
   font-size: 12px;
@@ -327,16 +328,16 @@ body.resizing-col {
   color: var(--text);
 }
 .icon-btn.active {
-  background: var(--accent-dim);
-  color: white;
-  border-color: transparent;
+  background: var(--sel-bg);
+  color: var(--accent);
+  border-color: var(--border-strong);
 }
 
 .search {
   margin: 0 10px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 7px 10px;
   color: var(--text);
   font-size: 13px;
@@ -354,21 +355,30 @@ body.resizing-col {
 
 .file-item {
   padding: 6px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 13px;
+  /* Expanding a folder of a few thousand notes is a few thousand rows the browser
+     otherwise lays out and paints in full. Same trick as the editor's `.bl-cv`
+     (see editor.css) — the rows stay in the DOM, so drag-reorder and scroll-into-
+     view still work. Rows are a fixed height, so the intrinsic size is exact and
+     the scrollbar never jumps. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 27px;
 }
 .file-item:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 .file-item.active {
-  background: var(--accent-dim);
-  color: white;
+  background: var(--sel-bg);
+  color: var(--text);
+  /* A spine rather than a block: it marks the row without repainting it. */
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 .file-item .dir {
   color: var(--text-faint);
@@ -380,7 +390,7 @@ body.resizing-col {
   padding: 5px 9px;
   background: var(--bg);
   border: 1px solid var(--accent-dim);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   font-size: 13px;
   font-family: inherit;
@@ -418,7 +428,7 @@ body.resizing-col {
   min-width: 180px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 4px;
   box-shadow: var(--shadow-md);
 }
@@ -481,4 +491,16 @@ body.resizing-col {
   padding: 32px 48px 80px;
   font-family: var(--font-editor, var(--font-ui));
   font-size: var(--doc-font-size, 16px);
+}
+
+/* The search box has two modes; the accent border is the only signal that the
+   query engine — not plain text search — is answering. */
+.search.is-query {
+  border-color: var(--accent-dim);
+}
+.search-mode {
+  margin: 0 10px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { KEYMAP } from '../lib/keymap'
 
 interface Row {
   /** Key combo or syntax (rendered as a chip). */
@@ -19,6 +20,15 @@ interface Section {
  * per-area detail. The filter box exists because the full list is ~120 rows:
  * without it, breadth reads as clutter rather than depth.
  */
+/** The shortcut reference is GENERATED from lib/keymap, so the sheet can't drift
+ *  from what's actually bound (and the keymap test catches a chord bound twice). */
+const KEY_SECTIONS: Section[] = (['Navigate', 'Panels', 'Notes', 'Capture', 'Editing'] as const)
+  .map((group) => ({
+    title: `Keys — ${group.toLowerCase()}`,
+    rows: KEYMAP.filter((b) => b.group === group).map((b) => ({ k: b.keys, d: b.label }))
+  }))
+  .filter((sec) => sec.rows.length > 0)
+
 const SECTIONS: Section[] = [
   {
     title: 'Start here',
@@ -49,8 +59,9 @@ const SECTIONS: Section[] = [
     rows: [
       { k: '⌘K  /  ⌘P', d: 'Command palette — jump to any note (filename or full-text), or run a command.' },
       { k: '⌘D', d: 'Open today’s daily note, creating it from your Journal template if it’s the first time today.' },
-      { k: 'Search box', d: 'Searches note titles and body text; shows a matching snippet.' },
+      { k: 'Search box', d: 'Plain words search note titles and body text. Type query syntax instead — #tag, [[link]], before:/after:, prop:key=value, -not, sort:, limit: — and the same box filters the vault with the query language.' },
       { k: '⌘-click', d: 'Open a note or link in a split beside the current one. Repeat for several side by side.' },
+      { k: '⤢ on a split', d: 'Expand that split into the main pane (or double-click its header). Back returns to what you were on.' },
       { k: '⌘[ / ⌘]', d: 'Back / forward through where you’ve been.' },
       { k: '⌘\\  ·  ⌘⇧\\', d: 'Show / hide the left sidebar · the right panel.' },
       { k: '⌘⌥\\', d: 'Zen mode — hide every panel and the top bar, leaving just the note. Esc leaves it.' },
@@ -234,9 +245,12 @@ export function Help({ onClose }: { onClose: () => void }): React.JSX.Element {
   // Match the section title too, so "canvas" surfaces the whole Canvas section
   // rather than only the rows that happen to repeat the word.
   const shown = useMemo(() => {
+    // The generated key sections sit at the end: the prose sections teach the app,
+    // the key table is what you come back for.
+    const all = [...SECTIONS, ...KEY_SECTIONS]
     const needle = q.trim().toLowerCase()
-    if (!needle) return SECTIONS
-    return SECTIONS.map((s) => {
+    if (!needle) return all
+    return all.map((s) => {
       if (s.title.toLowerCase().includes(needle)) return s
       const rows = s.rows.filter(
         (r) => r.k.toLowerCase().includes(needle) || r.d.toLowerCase().includes(needle)

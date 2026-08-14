@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import { promises as fs, realpathSync, type Stats } from 'fs'
 import path from 'path'
 import chokidar, { type FSWatcher } from 'chokidar'
-import { shell } from 'electron'
+import { app, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { AssetFile, CanvasMeta, FileEvent, NoteFile, Workspace, WriteResult } from '../shared/types.js'
 import { MEDIA_EXT_SET } from '../shared/media.js'
@@ -410,6 +410,7 @@ async function doOpenWorkspaceAt(root: string, win: BrowserWindow): Promise<Work
   }
   watchGen++ // invalidate any still-buffered timers from the old watcher
   knownMtimes.clear() // conflict baselines belong to the previous vault
+  lastStat.clear()
   lastSnapshotAt.clear()
   lastWrittenHash.clear()
   try {
@@ -533,7 +534,9 @@ export async function readNote(rel: string): Promise<string | null> {
     const abs = await resolveInRoot(rel)
     const text = await fs.readFile(abs, 'utf8')
     try {
-      knownMtimes.set(rel, (await fs.stat(abs)).mtimeMs)
+      const st = await fs.stat(abs)
+      knownMtimes.set(rel, st.mtimeMs)
+      lastStat.set(rel, { m: st.mtimeMs, s: st.size })
     } catch {
       /* stat is best-effort */
     }
@@ -542,6 +545,119 @@ export async function readNote(rel: string): Promise<string | null> {
     logErr(`readNote ${rel}`, e)
     return null
   }
+}
+
+// ---- persistent parse cache ------------------------------------------------
+// Parsing every note is ~20% of a cold start and is repeated on EVERY launch even
+// though almost nothing changed since the last one. The renderer hands its parse
+// results back here; we key them by (mtime, size) and return them next launch, so
+// only files that actually changed are re-parsed. The renderer still reads every
+// note's text — this removes the parse, not the I/O.
+//
+// The cache is only ever an optimisation: any mismatch, corruption or version
+// change silently degrades to "parse it again".
+
+/** Stat as of our last READ of each file, so a parse handed back later can be
+ *  stamped with the version of the file it was actually derived from. */
+const lastStat = new Map<string, { m: number; s: number }>()
+
+/** Bump when parse output changes shape. The app version is part of the key too,
+ *  so a release always invalidates — this is for changes within one version. */
+const PARSE_CACHE_VERSION = 1
+
+interface ParseCacheEntry {
+  m: number
+  s: number
+  p: unknown
+}
+let parseCache = new Map<string, ParseCacheEntry>()
+let parseCacheRoot: string | null = null
+let parseCacheDirty = false
+let parseCacheTimer: ReturnType<typeof setTimeout> | null = null
+/** Dev reloads parse.ts constantly and the app version doesn't move — a stale
+ *  cache there would be a genuinely confusing bug, so don't keep one. */
+const parseCacheEnabled = !process.env.ELECTRON_RENDERER_URL
+
+function parseCacheFile(root: string): string {
+  const key = createHash('sha1').update(root).digest('hex').slice(0, 16)
+  return path.join(app.getPath('userData'), 'parse-cache', `${key}.json`)
+}
+
+async function loadParseCache(root: string): Promise<void> {
+  parseCache = new Map()
+  parseCacheRoot = root
+  parseCacheDirty = false
+  if (!parseCacheEnabled) return
+  try {
+    const raw = await fs.readFile(parseCacheFile(root), 'utf8')
+    const data = JSON.parse(raw) as { v?: number; app?: string; entries?: Record<string, ParseCacheEntry> }
+    if (data.v !== PARSE_CACHE_VERSION || data.app !== app.getVersion() || !data.entries) return
+    parseCache = new Map(Object.entries(data.entries))
+  } catch {
+    /* no cache, unreadable, or corrupt — parse everything, as before */
+  }
+}
+
+async function flushParseCache(): Promise<void> {
+  if (!parseCacheDirty || !parseCacheRoot || !parseCacheEnabled) return
+  parseCacheDirty = false
+  const file = parseCacheFile(parseCacheRoot)
+  try {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await atomicWrite(
+      file,
+      JSON.stringify({
+        v: PARSE_CACHE_VERSION,
+        app: app.getVersion(),
+        entries: Object.fromEntries(parseCache)
+      })
+    )
+  } catch (e) {
+    logErr('flushParseCache', e)
+  }
+}
+
+/**
+ * Read a batch of notes, attaching each one's cached parse when the file on disk
+ * still matches the version the cache was built from. `parsed: null` means the
+ * renderer must parse it (and hand the result back via `saveParseCache`).
+ */
+export async function readNotesCached(
+  rels: string[]
+): Promise<{ path: string; text: string; parsed: unknown | null }[]> {
+  if (!currentRoot) return []
+  if (parseCacheRoot !== currentRoot) await loadParseCache(currentRoot)
+  const texts = await readNotes(rels)
+  return texts.map(({ path: p, text }) => {
+    const hit = parseCache.get(p)
+    const st = lastStat.get(p)
+    const fresh = hit && st && hit.m === st.m && hit.s === st.s
+    return { path: p, text, parsed: fresh ? hit.p : null }
+  })
+}
+
+/** Store parses the renderer just computed, stamped with the file version they
+ *  came from. Writing is debounced — hydration calls this once per batch. */
+export function saveParseCache(entries: { path: string; parsed: unknown }[]): void {
+  if (!parseCacheEnabled || !currentRoot) return
+  if (parseCacheRoot !== currentRoot) return // a vault switch raced us; next batch will land
+  for (const e of entries) {
+    const st = lastStat.get(e.path)
+    if (st) parseCache.set(e.path, { m: st.m, s: st.s, p: e.parsed })
+  }
+  parseCacheDirty = true
+  if (parseCacheTimer) clearTimeout(parseCacheTimer)
+  parseCacheTimer = setTimeout(() => {
+    parseCacheTimer = null
+    void flushParseCache()
+  }, 3000)
+}
+
+/** Persist immediately (app quit) — the debounce may not have fired. */
+export async function flushParseCacheNow(): Promise<void> {
+  if (parseCacheTimer) clearTimeout(parseCacheTimer)
+  parseCacheTimer = null
+  await flushParseCache()
 }
 
 // ---- local snapshots (`.verso/history/<note path>/<stamp>.md`) --------------

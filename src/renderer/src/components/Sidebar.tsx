@@ -2,6 +2,7 @@ import { useDeferredValue, useMemo, useRef, useState } from 'react'
 import { useStore, templatesFromFiles } from '../store'
 import { dirname } from '../lib/links'
 import { searchNotes } from '../lib/search'
+import { isStructuredQuery } from '../lib/query'
 import { supertagsFromParsed } from '../lib/supertags'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { VaultSwitcher } from './VaultSwitcher'
@@ -126,6 +127,7 @@ export function Sidebar(): React.JSX.Element {
   // character paint immediately and re-runs the search at lower priority (React
   // also drops superseded passes, so a fast typist pays for the last one only).
   const deferredQuery = useDeferredValue(query)
+  const index = useStore((s) => s.index)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [applyMenu, setApplyMenu] = useState<MenuState | null>(null)
   const [folderMenu, setFolderMenu] = useState<MenuState | null>(null)
@@ -148,18 +150,38 @@ export function Sidebar(): React.JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const tree = useMemo(() => buildTree(files, orderOf), [files, structSig])
 
-  const results = useMemo(
-    () =>
-      deferredQuery.trim()
-        ? searchNotes(deferredQuery, files, useStore.getState().texts, 60, {
-            fuzzyNames: false,
-            aliasOf: (p) => useStore.getState().parsed[p]?.aliases ?? [],
-            parsed: useStore.getState().parsed
-          })
-        : null,
+  // ONE search box, two engines. Plain words keep the fuzzy-name + full-text
+  // search; the moment the text uses query syntax (`#tag`, `before:`, `prop:`,
+  // `[[link]]`, `-not`, any directive) the same box runs the query language that
+  // `{{query}}` blocks and Bases already use. Nothing to switch, nothing to learn
+  // twice — the operators you can write in a note now work here too.
+  const isQuery = useMemo(() => isStructuredQuery(deferredQuery), [deferredQuery])
+
+  const results = useMemo(() => {
+    const q = deferredQuery.trim()
+    if (!q) return null
+    if (isQuery) {
+      // A sidebar row is a NOTE, so default to note scope — and that's also the
+      // only scope that can match a note whose tags live in frontmatter and whose
+      // body has no blocks at all. An explicit `scope:` in the text still wins.
+      const raw = /(^|\s)scope:/i.test(q) ? q : `${q} scope:notes`
+      const res = index.runQuery(raw)
+      const rows = res.notes ?? []
+      return rows.slice(0, 200).map((n) => ({
+        path: n.path,
+        name: n.name,
+        score: 0,
+        snippet: n.excerpt,
+        inBody: false
+      }))
+    }
+    return searchNotes(deferredQuery, files, useStore.getState().texts, 60, {
+      fuzzyNames: false,
+      aliasOf: (p) => useStore.getState().parsed[p]?.aliases ?? [],
+      parsed: useStore.getState().parsed
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [deferredQuery, files, structSig]
-  )
+  }, [deferredQuery, files, structSig, isQuery, index])
 
   const pinned = useMemo(() => {
     const parsed = useStore.getState().parsed
@@ -382,8 +404,9 @@ export function Sidebar(): React.JSX.Element {
       </div>
       <div className="search-wrap">
         <input
-          className="search"
-          placeholder="Search notes…"
+          className={'search' + (isQuery ? ' is-query' : '')}
+          placeholder="Search — or #tag, before:, prop:…"
+          title="Plain words search names and text. Query syntax (#tag, [[link]], before:/after:, prop:key=value, -not, sort:, limit:) filters the vault."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -391,6 +414,13 @@ export function Sidebar(): React.JSX.Element {
           ⌘K
         </button>
       </div>
+      {/* Say which engine answered — otherwise a query returning few rows looks
+          like a broken search rather than a filter doing its job. */}
+      {isQuery && results && (
+        <div className="search-mode" role="status">
+          Query · {results.length} {results.length === 1 ? 'note' : 'notes'}
+        </div>
+      )}
       {/* Vault-wide results (search, backlinks, graph, queries) are incomplete until
           hydration finishes — say so rather than quietly returning too few hits. */}
       {vaultLoading && (

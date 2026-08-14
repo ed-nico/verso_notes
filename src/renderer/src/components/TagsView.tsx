@@ -10,6 +10,7 @@ import {
   type FieldType,
   type Supertag
 } from '../lib/supertags'
+import { VaultLoadingNote } from './VaultLoading'
 
 /** Format a frontmatter value for an instance-table cell. */
 function fmtCell(v: unknown): string {
@@ -200,6 +201,7 @@ export function TagsView(): React.JSX.Element {
   return (
     <div className="scroll-area">
       <div className="doc tags-doc">
+        <VaultLoadingNote what="Tag counts are still climbing." />
         <h1>Tags</h1>
         {tags.length === 0 && (
           <p className="empty-note">

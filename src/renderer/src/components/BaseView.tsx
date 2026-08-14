@@ -5,7 +5,7 @@ import { passesFilter, type AggKind, type Base } from '../lib/bases'
 import { parseLooseDate } from '../lib/dates'
 import { propOptions, storedPropType, typeOf, type PropType } from './PropertiesPanel'
 import { optionColors, type OptionColor } from '../lib/propColors'
-import { vaultPropSchemas, type PropSchema } from '../lib/propSchema'
+import { propSchemasFor, type PropSchema } from '../lib/propSchema'
 import { OptionChip, SelectChip } from './SelectChip'
 import type { ParsedNote } from '@shared/types'
 import type { VaultIndex } from '../lib/vault'
@@ -306,7 +306,7 @@ export function BaseView({
   // Board: only a real frontmatter field can be reassigned by dragging a card.
   const BUILTIN_KEYS = ['name', 'backlinks', 'tags', 'cover']
   // Resolve each editable column's type/options once (from all rows) for consistent inline edits.
-  const schemas = useMemo(() => vaultPropSchemas(Object.values(parsed)), [parsed])
+  const schemas = propSchemasFor(parsed)
   const colMeta = useMemo(() => {
     const meta: Record<string, { type: PropType; options: string[]; colors: Record<string, OptionColor> }> = {}
     if (interactive)

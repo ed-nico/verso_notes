@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useSectionOpen } from './RightSection'
 import ForceGraph2D from './LazyForceGraph'
 import { useGraphColors } from './GraphView'
 import { useStore } from '../store'
@@ -9,7 +10,7 @@ export function LocalGraph({ path }: { path: string }): React.JSX.Element | null
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
   const colors = useGraphColors()
-  const [open, setOpen] = useState(false)
+  const [open, toggle] = useSectionOpen('localgraph', false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(248)
 
@@ -30,7 +31,7 @@ export function LocalGraph({ path }: { path: string }): React.JSX.Element | null
 
   return (
     <div className="localgraph">
-      <button className="rightbar-section-head" onClick={() => setOpen((v) => !v)}>
+      <button className="rightbar-section-head" onClick={toggle}>
         <span className="rightbar-caret">{open ? '▾' : '▸'}</span>
         Local graph
         <span className="rightbar-section-count">{data.nodes.length - 1}</span>

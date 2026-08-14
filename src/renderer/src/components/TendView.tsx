@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { tendReport, type Suggestion, type BrokenLink } from '../lib/tend'
 import { dirname } from '../lib/links'
 import type { NoteFile } from '@shared/types'
+import { VaultLoadingNote } from './VaultLoading'
 
 /** Most rows shown per section before the "+N more" tail. */
 const ROW_CAP = 30
@@ -163,6 +164,7 @@ export function TendView(): React.JSX.Element {
   return (
     <div className="scroll-area">
       <div className="doc tend">
+        <VaultLoadingNote what="Suggestions will change as more notes load." />
         <div className="tend-head">
           <h1>Tend</h1>
           <button className="btn ghost" onClick={randomNote} title="Open a random note — serendipity on demand">

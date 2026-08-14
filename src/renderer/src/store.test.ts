@@ -40,6 +40,15 @@ const verso = {
     readNotesCalls.push(paths.length)
     return paths.filter((p) => diskVault[p] !== undefined).map((p) => ({ path: p, text: diskVault[p] }))
   }),
+  // Hydration reads through the parse cache. `parsed: null` is the cold-cache
+  // case — identical to the old readNotes path, which is what these tests pin.
+  readNotesCached: vi.fn(async (paths: string[]) => {
+    readNotesCalls.push(paths.length)
+    return paths
+      .filter((p) => diskVault[p] !== undefined)
+      .map((p) => ({ path: p, text: diskVault[p], parsed: null }))
+  }),
+  saveParseCache: vi.fn(async () => undefined),
   loadWorkspace: vi.fn(async (root: string) => ({
     root,
     files: Object.keys(diskVault).map((path) => ({
@@ -261,7 +270,7 @@ describe('streaming vault hydration', () => {
     // The active note comes from a single readNote; the rest arrive via readNotes,
     // which must therefore never be asked for it.
     const active = useStore.getState().activePath!
-    const asked = verso.readNotes.mock.calls.flatMap((c: unknown[]) => c[0] as string[])
+    const asked = verso.readNotesCached.mock.calls.flatMap((c: unknown[]) => c[0] as string[])
     expect(asked).not.toContain(active)
     expect(asked).toHaveLength(29)
   })
@@ -288,12 +297,14 @@ describe('streaming vault hydration', () => {
     // Edit from INSIDE the first batch, so the write genuinely races hydration:
     // n0500 lives in the second batch and has not been read yet at this point.
     let edited = false
-    verso.readNotes.mockImplementation(async (paths: string[]) => {
+    verso.readNotesCached.mockImplementation(async (paths: string[]) => {
       if (!edited) {
         edited = true
         useStore.getState().editNote('n0500.md', 'typed while loading')
       }
-      return paths.filter((p) => diskVault[p] !== undefined).map((p) => ({ path: p, text: diskVault[p] }))
+      return paths
+        .filter((p) => diskVault[p] !== undefined)
+        .map((p) => ({ path: p, text: diskVault[p], parsed: null }))
     })
     await useStore.getState().reloadVault()
     expect(edited).toBe(true)

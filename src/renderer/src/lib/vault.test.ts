@@ -199,6 +199,55 @@ describe('unlinkedReferences hardening (2026-07 audit)', () => {
   })
 })
 
+// The scan is a word index rather than one all-names alternation (that grew with
+// the vault and cost 10s at 40k notes). These pin the matching rules it has to
+// keep: longest name wins, matches don't overlap, boundaries are unchanged, and
+// names that don't start with a word character still resolve.
+describe('unlinkedReferences word-index scan', () => {
+  it('prefers the longest name at a position', () => {
+    const idx = index({
+      'Work.md': 'x',
+      'Deep Work.md': 'y',
+      'A.md': 'thinking about Deep Work today'
+    })
+    expect(idx.unlinkedReferences('Deep Work.md').map((r) => r.sourcePath)).toEqual(['A.md'])
+    // "Work" sits inside the longer match, so it is not also reported.
+    expect(idx.unlinkedReferences('Work.md')).toHaveLength(0)
+  })
+
+  it('matches back-to-back mentions', () => {
+    const idx = index({ 'Alpha.md': 'x', 'Beta.md': 'y', 'A.md': 'Alpha Beta' })
+    expect(idx.unlinkedReferences('Alpha.md')).toHaveLength(1)
+    expect(idx.unlinkedReferences('Beta.md')).toHaveLength(1)
+  })
+
+  it('does not match a name embedded in a longer word', () => {
+    const idx = index({ 'Work.md': 'x', 'A.md': 'homework and workflow' })
+    expect(idx.unlinkedReferences('Work.md')).toHaveLength(0)
+  })
+
+  it('does not match inside a path or an existing wikilink', () => {
+    const idx = index({ 'Work.md': 'x', 'A.md': 'see notes/Work/ and [[Work]]' })
+    expect(idx.unlinkedReferences('Work.md')).toHaveLength(0)
+  })
+
+  it('finds names that do not start with a word character', () => {
+    const idx = index({ '.env notes.md': 'x', 'A.md': 'edited .env notes earlier' })
+    expect(idx.unlinkedReferences('.env notes.md').map((r) => r.sourcePath)).toEqual(['A.md'])
+  })
+
+  it('reports one row per target per line, case-insensitively', () => {
+    const idx = index({ 'Work.md': 'x', 'A.md': 'work then Work then WORK' })
+    expect(idx.unlinkedReferences('Work.md')).toHaveLength(1)
+  })
+
+  it('resolves duplicate basenames to every note carrying the name', () => {
+    const idx = index({ 'a/Work.md': 'x', 'b/Work.md': 'y', 'A.md': 'about Work' })
+    expect(idx.unlinkedReferences('a/Work.md')).toHaveLength(1)
+    expect(idx.unlinkedReferences('b/Work.md')).toHaveLength(1)
+  })
+})
+
 describe('backlink context per occurrence', () => {
   it('gives each backlink row its own line when a source links twice', () => {
     const idx = index({

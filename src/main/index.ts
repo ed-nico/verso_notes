@@ -25,6 +25,9 @@ import {
   MEDIA_EXTS,
   readNote,
   readNotes,
+  readNotesCached,
+  saveParseCache,
+  flushParseCacheNow,
   readUserDictionary,
   renameNote,
   resolveAsset,
@@ -43,7 +46,7 @@ protocol.registerSchemesAsPrivileged([
     privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
   }
 ])
-import type { NoteContent, WriteResult } from '../shared/types.js'
+import type { CachedNoteContent, NoteContent, WriteResult } from '../shared/types.js'
 import { PROD_CSP } from '../shared/csp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -399,6 +402,18 @@ function registerIpc(): void {
     return readNotes(paths.filter(isStr))
   })
 
+  ipcMain.handle('note:readManyCached', async (_e, paths: unknown): Promise<CachedNoteContent[]> => {
+    if (!Array.isArray(paths)) return []
+    return readNotesCached(paths.filter(isStr))
+  })
+
+  ipcMain.handle('note:saveParseCache', (_e, entries: unknown): void => {
+    if (!Array.isArray(entries)) return
+    saveParseCache(
+      entries.filter((e): e is { path: string; parsed: unknown } => !!e && isStr((e as { path?: unknown }).path))
+    )
+  })
+
   ipcMain.handle('note:write', async (_e, p: string, text: string): Promise<WriteResult> => {
     if (!isStr(p) || !isStr(text)) return badArgs
     return writeNote(p, text)
@@ -705,5 +720,8 @@ app
 
 app.on('window-all-closed', () => {
   closeWatcher()
+  // The parse cache write is debounced; a quit inside that window would throw
+  // away a whole hydration's worth of work and re-parse the vault next launch.
+  void flushParseCacheNow()
   if (process.platform !== 'darwin') app.quit()
 })

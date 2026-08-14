@@ -94,7 +94,7 @@ export function JournalView(): React.JSX.Element {
   const days = useMemo(() => Array.from({ length: count }, (_, i) => addDays(today, -i)), [today, count])
   const todos = useMemo(() => {
     const texts = useStore.getState().texts
-    return aggregateTodos(Object.entries(texts).map(([path, text]) => ({ path, text })))
+    return aggregateTodos(texts)
     // `index` is the intended trigger, not an unused dep: `texts` is mutated in
     // place while typing, so a new index identity is the signal that the debounced
     // rebuild has landed and the todo aggregate is worth recomputing.

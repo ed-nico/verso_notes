@@ -292,6 +292,8 @@ interface VersoState {
   openPdf: (path: string, highlightId?: string) => void
   /** Close the split at `index` (or the last one when omitted). */
   closeSidePane: (index?: number) => void
+  /** Move the note in the split at `index` into the main pane, closing the split. */
+  promoteSidePane: (index: number) => void
   goBack: () => void
   goForward: () => void
 
@@ -533,16 +535,27 @@ export const useStore = create<VersoState>((set, get) => {
     for (let i = 0; i < paths.length; i += HYDRATE_CHUNK) {
       if (gen !== loadGen) return // vault switched under us
       const slice = paths.slice(i, i + HYDRATE_CHUNK)
-      const contents = await window.verso.readNotes(slice)
+      const contents = await window.verso.readNotesCached(slice)
       if (gen !== loadGen) return
       const { texts, parsed } = get()
-      for (const { path, text } of contents) {
+      // Notes the cache couldn't answer for, to hand back below. Parsing is ~20% of
+      // a cold start and almost none of it changes between launches, so the second
+      // and later launches on an unchanged vault do essentially none of it.
+      const fresh: { path: string; parsed: unknown }[] = []
+      for (const { path, text, parsed: cached } of contents) {
         // Never clobber a note already in memory: it was either opened on demand
         // (ensureLoaded) or edited while the rest of the vault streamed in.
         if (texts[path] !== undefined) continue
         texts[path] = text
-        parsed[path] = parseNote(path, text)
+        if (cached) {
+          parsed[path] = cached as ParsedNote
+        } else {
+          const pn = parseNote(path, text)
+          parsed[path] = pn
+          fresh.push({ path, parsed: pn })
+        }
       }
+      if (fresh.length) void window.verso.saveParseCache(fresh)
       set({ texts, textsTick: get().textsTick + 1, loadedCount: Object.keys(texts).length })
     }
     if (gen !== loadGen) return
@@ -1277,6 +1290,16 @@ export const useStore = create<VersoState>((set, get) => {
       if (!panes.length) return
       const at = index ?? panes.length - 1
       set({ sidePanes: panes.filter((_, i) => i !== at) })
+    },
+
+    promoteSidePane: (index) => {
+      const panes = get().sidePanes
+      const pane = panes[index]
+      if (!pane || pane.kind !== 'note') return // a PDF has no main-pane renderer
+      set({ sidePanes: panes.filter((_, i) => i !== index) })
+      // Through openNote, so whatever the main pane was showing (a base, a query,
+      // the journal) is one Back away — promoting is a step forward, not a swap.
+      get().openNote(pane.path)
     },
 
     editNote: (path, text) => {

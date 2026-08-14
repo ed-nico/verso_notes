@@ -17,6 +17,11 @@ export interface NoteContent {
   text: string
 }
 
+/** A note read from disk together with its cached parse, if the cache is current. */
+export interface CachedNoteContent extends NoteContent {
+  parsed: unknown | null
+}
+
 /** A wikilink occurrence found inside a note. */
 export interface LinkRef {
   /** The workspace-relative target path the link resolves to (with .md), or null if unresolved. */
@@ -111,6 +116,13 @@ export interface VersoApi {
    *  UI is usable before the whole vault has been read (see the store's `hydrateVault`);
    *  missing/unreadable paths are simply omitted from the result. */
   readNotes: (paths: string[]) => Promise<NoteContent[]>
+  /** Like `readNotes`, but each note also carries the parse the main process has
+   *  cached for it — or `null` when the file changed since (parse it, then hand the
+   *  result back with `saveParseCache`). Purely an optimisation: treating every
+   *  `parsed` as null behaves exactly like `readNotes`. */
+  readNotesCached: (paths: string[]) => Promise<CachedNoteContent[]>
+  /** Hand freshly parsed notes to the main process to cache for the next launch. */
+  saveParseCache: (entries: { path: string; parsed: unknown }[]) => Promise<void>
   writeNote: (path: string, text: string) => Promise<WriteResult>
   createNote: (path: string, text: string) => Promise<NoteFile | null>
   /** Move/rename a note on disk. Returns the new file, or null on failure (e.g. target exists). */

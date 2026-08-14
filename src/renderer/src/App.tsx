@@ -3,10 +3,6 @@ import { useStore, templatesFromFiles, EDITOR_FONTS, ACCENTS, type SidePane } fr
 import { todayISO } from './lib/dates'
 import { Sidebar } from './components/Sidebar'
 import { Backlinks } from './components/Backlinks'
-import { GraphView } from './components/GraphView'
-import { BasesView } from './components/BasesView'
-import { AssetsView } from './components/AssetsView'
-import { TagsView } from './components/TagsView'
 import { BlockEditor } from './components/BlockEditor'
 import { NoteTitle } from './components/NoteTitle'
 import { PropertiesPanel } from './components/PropertiesPanel'
@@ -17,16 +13,12 @@ import { JournalView } from './components/JournalView'
 import { Calendar } from './components/Calendar'
 import { OnThisDay } from './components/OnThisDay'
 import { HistoryPanel } from './components/HistoryPanel'
-import { TodosView } from './components/TodosView'
-import { TendView } from './components/TendView'
-import { CompileView } from './components/CompileView'
 import { CommandPalette } from './components/CommandPalette'
-import { Settings } from './components/Settings'
-import { Help } from './components/Help'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { LinkPreview } from './components/LinkPreview'
 import { ContextMenu } from './components/ContextMenu'
 import { ResizeHandle } from './components/ResizeHandle'
+import { RightSection } from './components/RightSection'
 import { QuickTask } from './components/QuickTask'
 import { noteStats } from './lib/stats'
 import { REVEAL_LABEL } from './lib/platform'
@@ -35,6 +27,18 @@ import { REVEAL_LABEL } from './lib/platform'
 const PdfWorkspace = lazy(() => import('./components/PdfWorkspace').then((m) => ({ default: m.PdfWorkspace })))
 // The canvas surface is only needed in the Canvas view — load it lazily too.
 const CanvasView = lazy(() => import('./components/CanvasView').then((m) => ({ default: m.CanvasView })))
+// Every other full-screen view and modal: none of them is on the path to a first
+// paint of a note, and keeping them out of the entry chunk is what stops the app's
+// startup cost growing with each screen added. All render inside a Suspense already.
+const GraphView = lazy(() => import('./components/GraphView').then((m) => ({ default: m.GraphView })))
+const BasesView = lazy(() => import('./components/BasesView').then((m) => ({ default: m.BasesView })))
+const AssetsView = lazy(() => import('./components/AssetsView').then((m) => ({ default: m.AssetsView })))
+const TagsView = lazy(() => import('./components/TagsView').then((m) => ({ default: m.TagsView })))
+const TodosView = lazy(() => import('./components/TodosView').then((m) => ({ default: m.TodosView })))
+const TendView = lazy(() => import('./components/TendView').then((m) => ({ default: m.TendView })))
+const CompileView = lazy(() => import('./components/CompileView').then((m) => ({ default: m.CompileView })))
+const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })))
+const Help = lazy(() => import('./components/Help').then((m) => ({ default: m.Help })))
 
 function Welcome(): React.JSX.Element {
   const openWorkspace = useStore((s) => s.openWorkspace)
@@ -87,6 +91,7 @@ function TopBar(): React.JSX.Element {
   const duplicateNote = useStore((s) => s.duplicateNote)
   const applyTemplateToNote = useStore((s) => s.applyTemplateToNote)
   const openModal = useStore((s) => s.openModal)
+  const toggleZen = useStore((s) => s.toggleZen)
   const isPinned = useStore(
     (s) => !!(s.activePath && (s.parsed[s.activePath]?.frontmatter as { pinned?: unknown } | undefined)?.pinned)
   )
@@ -160,6 +165,9 @@ function TopBar(): React.JSX.Element {
               ? [{ label: '▤ Apply template…', onClick: () => setTplMenu({ x: pageMenu.x, y: pageMenu.y }) }]
               : []),
             { label: 'Duplicate', onClick: () => void duplicateNote(activePath) },
+            // Zen has no visible affordance anywhere else — ⌘⌥\ is undiscoverable
+            // on its own, so the one menu that's always reachable carries it.
+            { label: '◻ Zen mode (⌘⌥\\)', onClick: () => toggleZen() },
             { label: '⧉ Compile from links…', onClick: () => openModal('compile') },
             { label: '↺ History…', onClick: () => setHistoryFor(activePath) },
             { label: '⤓ Export as PDF…', onClick: () => void exportActivePdf(activePath, nameOf(activePath)) },
@@ -234,14 +242,27 @@ function NoteArea({ path }: { path: string }): React.JSX.Element {
 
 function SideNote({ path, paneIndex }: { path: string; paneIndex: number }): React.JSX.Element {
   const closeSidePane = useStore((s) => s.closeSidePane)
+  const promoteSidePane = useStore((s) => s.promoteSidePane)
   const name = useStore((s) => s.files.find((f) => f.path === path)?.name ?? path.split('/').pop())
   return (
     <div className="side-note">
-      <div className="pdf-pane-head">
+      {/* Double-click the bar to promote too — the button is small, and the header
+          is the thing you're already pointing at when you decide to expand. */}
+      <div className="pdf-pane-head" onDoubleClick={() => promoteSidePane(paneIndex)}>
         <span className="pdf-pane-title">{name}</span>
-        <button className="icon-btn" title="Close pane" onClick={() => closeSidePane(paneIndex)}>
-          ✕
-        </button>
+        <div className="pane-head-actions">
+          <button
+            className="icon-btn"
+            title="Open in main pane"
+            aria-label="Open in main pane"
+            onClick={() => promoteSidePane(paneIndex)}
+          >
+            ⤢
+          </button>
+          <button className="icon-btn" title="Close pane" onClick={() => closeSidePane(paneIndex)}>
+            ✕
+          </button>
+        </div>
       </div>
       <NoteArea path={path} />
     </div>
@@ -298,12 +319,15 @@ function RightSidebar(): React.JSX.Element {
   return (
     <aside className="rightbar">
       <ResizeHandle side="right" width={rightbarWidth} onResize={setRightbarWidth} label="Resize right panel" />
-      <Calendar onPick={(iso) => void ensureDailyNote(iso).then(openNote)} />
+      <RightSection id="calendar" title="Calendar">
+        <Calendar onPick={(iso) => void ensureDailyNote(iso).then(openNote)} />
+      </RightSection>
       {view === 'journal' && <OnThisDay />}
       {view === 'editor' && activePath && (
         <>
-          <div className="rightbar-title">Properties</div>
-          <PropertiesPanel key={activePath} path={activePath} />
+          <RightSection id="properties" title="Properties">
+            <PropertiesPanel key={activePath} path={activePath} />
+          </RightSection>
           <TableOfContents key={'toc:' + activePath} path={activePath} />
           <SimilarNotes key={'sim:' + activePath} path={activePath} />
           <LocalGraph key={'lg:' + activePath} path={activePath} />
@@ -566,9 +590,21 @@ function Modals(): React.JSX.Element | null {
   const modal = useStore((s) => s.modal)
   const closeModal = useStore((s) => s.closeModal)
   const activePath = useStore((s) => s.activePath)
-  if (modal === 'settings') return <Settings onClose={closeModal} />
-  if (modal === 'help') return <Help onClose={closeModal} />
+  // QuickTask stays eager — it is ⌘⇧T capture, and a chunk fetch between the
+  // keystroke and the input appearing is exactly the pause capture can't have.
   if (modal === 'task') return <QuickTask onClose={closeModal} />
-  if (modal === 'compile' && activePath) return <CompileView path={activePath} onClose={closeModal} />
-  return null
+  const lazyModal =
+    modal === 'settings' ? (
+      <Settings onClose={closeModal} />
+    ) : modal === 'help' ? (
+      <Help onClose={closeModal} />
+    ) : modal === 'compile' && activePath ? (
+      <CompileView path={activePath} onClose={closeModal} />
+    ) : null
+  if (!lazyModal) return null
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={null}>{lazyModal}</Suspense>
+    </ErrorBoundary>
+  )
 }

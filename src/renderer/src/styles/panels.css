@@ -103,7 +103,7 @@
   margin-bottom: 12px;
   padding: 8px 12px;
   background: var(--bg-panel);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 .todo-wrap.overdue {
   display: flex;
@@ -220,10 +220,14 @@ html[data-theme='light'] {
   --bg-panel: #f4f4f2;
   --bg-elevated: #ffffff;
   --bg-hover: #ececea;
-  --border: #e4e4e0;
   --text: #26262b;
   --text-dim: #6b6b74;
   --text-faint: #a3a3ab;
+  /* Hairlines want to be FAINTER on a light ground than a dark one: dark-on-light
+     reads heavier at the same percentage. */
+  --border: color-mix(in srgb, var(--text) 11%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 20%, transparent);
+  --sel-bg: color-mix(in srgb, var(--accent) 13%, transparent);
   --accent: #4f5bd5;
   --accent-dim: #5f6ad8;
   --link: #3d51cc;
@@ -249,10 +253,12 @@ html[data-theme='paper'] {
   --bg-panel: #e4dbc6;
   --bg-elevated: #f4eee0;
   --bg-hover: #ded3ba;
-  --border: #d2c6ac;
   --text: #2b2721;
   --text-dim: #635b4c;
   --text-faint: #918876;
+  --border: color-mix(in srgb, var(--text) 14%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 24%, transparent);
+  --sel-bg: color-mix(in srgb, var(--accent) 15%, transparent);
   /* No --accent/--accent-dim/--link here: App.tsx always writes those three inline
      from the chosen ACCENT, so anything set here is dead. Pick Amber in Settings
      for a fully warm page. */
@@ -357,7 +363,7 @@ html[data-theme='paper'] .scroll-area {
 /* ---------- Inline images ---------- */
 .inline-img {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius);
   margin: 4px 0;
   display: block;
 }
@@ -423,7 +429,7 @@ html[data-theme='paper'] .scroll-area {
   color: var(--text-dim);
   cursor: pointer;
   font-weight: 600;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   user-select: none;
 }
 .folder-item:hover {
@@ -527,7 +533,7 @@ html[data-theme='paper'] .scroll-area {
   max-width: calc(100vw - 24px);
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 14px 16px;
   box-shadow: var(--shadow-md);
   /* Interactive: you can move into it and scroll the note. */
@@ -577,7 +583,7 @@ html[data-theme='paper'] .scroll-area {
 .hp-code {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
   margin: 4px 0;
   font-family: var(--font-mono);
@@ -632,7 +638,7 @@ html[data-theme='paper'] .scroll-area {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  border-radius: 8px;
+  border-radius: var(--radius);
   overflow: hidden;
   background: #000;
   border: 1px solid var(--border);
@@ -660,7 +666,7 @@ html[data-theme='paper'] .scroll-area {
 .video-ts-btn {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-size: 12px;
   padding: 4px 10px;

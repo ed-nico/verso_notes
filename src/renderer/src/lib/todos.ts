@@ -110,16 +110,22 @@ export function clearTodoCache(): void {
   todoCache.clear()
 }
 
-export function aggregateTodos(notes: { path: string; text: string }[]): Todo[] {
+export function aggregateTodos(notes: { path: string; text: string }[] | Record<string, string>): Todo[] {
   const all: Todo[] = []
-  for (const n of notes) {
-    const hit = todoCache.get(n.path)
+  // Accepts the store's `texts` map directly: the callers used to build a
+  // {path,text} array for the whole vault on every rebuild just to hand it here,
+  // which cost more than the per-note cache below saves.
+  const entries: Iterable<[string, string]> = Array.isArray(notes)
+    ? notes.map((n) => [n.path, n.text] as [string, string])
+    : Object.entries(notes)
+  for (const [path, text] of entries) {
+    const hit = todoCache.get(path)
     let todos: Todo[]
-    if (hit && hit.text === n.text) {
+    if (hit && hit.text === text) {
       todos = hit.todos
     } else {
-      todos = extractTodos(n.path, n.text)
-      todoCache.set(n.path, { text: n.text, todos })
+      todos = extractTodos(path, text)
+      todoCache.set(path, { text, todos })
     }
     all.push(...todos)
   }

@@ -8,7 +8,7 @@ import { resolveTarget } from '../lib/links'
 import { ContextMenu } from './ContextMenu'
 import { renderInline } from './InlineMarkdown'
 import { SelectChip } from './SelectChip'
-import { vaultPropSchemas, withOptions } from '../lib/propSchema'
+import { propSchemasFor, withOptions } from '../lib/propSchema'
 import {
   OPTION_COLORS,
   optionColors,
@@ -523,7 +523,7 @@ export function PropertiesPanel({ path }: { path: string }): React.JSX.Element {
       : {}
   // Select vocabularies defined anywhere in the vault, so one note can type a
   // property that a thousand notes carry (lib/propSchema).
-  const schemas = useMemo(() => vaultPropSchemas(Object.values(parsed)), [parsed])
+  const schemas = propSchemasFor(parsed)
   const effType = (key: string): PropType => {
     const t = storedTypes[key]
     if (typeof t === 'string' && PROP_TYPES.some((p) => p.value === t)) return t as PropType

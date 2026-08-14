@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseQuery, matchBlock, scanBlocks, dropFromScanCache, clearScanCache, type QueryBlock } from './query'
+import { parseQuery, matchBlock, scanBlocks, dropFromScanCache, clearScanCache, isStructuredQuery, type QueryBlock } from './query'
 import { VaultIndex } from './vault'
 import { parseNote } from './parse'
 
@@ -433,5 +433,35 @@ describe('scope / cols / gallery (v4 directives)', () => {
     const s = parseQuery('scope:sideways')
     expect(s.scope).toBe('blocks')
     expect(s.groups[0].atoms[0]).toMatchObject({ kind: 'term', value: 'scope:sideways' })
+  })
+})
+
+// One search box serves both engines; this is the switch between them.
+describe('isStructuredQuery', () => {
+  it('treats plain words as plain search', () => {
+    expect(isStructuredQuery('deep work')).toBe(false)
+    expect(isStructuredQuery('')).toBe(false)
+    expect(isStructuredQuery('well-known thing')).toBe(false)
+  })
+
+  it('does not hijack the ordinary words "todo" and "done"', () => {
+    expect(isStructuredQuery('todo')).toBe(false)
+    expect(isStructuredQuery('done')).toBe(false)
+  })
+
+  it('recognises operators', () => {
+    expect(isStructuredQuery('#book')).toBe(true)
+    expect(isStructuredQuery('before:2026-01-01')).toBe(true)
+    expect(isStructuredQuery('prop:Status=Read')).toBe(true)
+    expect(isStructuredQuery('[[Deep Work]]')).toBe(true)
+    expect(isStructuredQuery('-draft')).toBe(true)
+    expect(isStructuredQuery('sort:-name')).toBe(true)
+    expect(isStructuredQuery('limit:5')).toBe(true)
+    expect(isStructuredQuery('scope:notes')).toBe(true)
+    expect(isStructuredQuery('a OR b')).toBe(true)
+  })
+
+  it('reaches the task filter once something else marks it a query', () => {
+    expect(isStructuredQuery('#book todo')).toBe(true)
   })
 })

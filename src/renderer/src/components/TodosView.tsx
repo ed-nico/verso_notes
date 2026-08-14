@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { TodoItem } from './TodoItem'
 import { aggregateTodos, sortByDate, type Todo } from '../lib/todos'
 import { formatLong, todayISO } from '../lib/dates'
+import { VaultLoadingNote } from './VaultLoading'
 
 function Group({ title, todos, showDate }: { title: string; todos: Todo[]; showDate?: boolean }): React.JSX.Element | null {
   if (todos.length === 0) return null
@@ -33,7 +34,7 @@ export function TodosView(): React.JSX.Element {
 
   const { overdueG, backlogG, todayG, upcoming, someday, done } = useMemo(() => {
     const texts = useStore.getState().texts
-    const all = aggregateTodos(Object.entries(texts).map(([path, text]) => ({ path, text })))
+    const all = aggregateTodos(texts)
     const open = all.filter((t) => !t.checked)
     // Only EXPLICIT dates make a task overdue; a bare checkbox in an old daily
     // note is backlog, not lateness (it would otherwise drown real deadlines).
@@ -77,6 +78,7 @@ export function TodosView(): React.JSX.Element {
   return (
     <div className="scroll-area">
       <div className="doc todos-doc">
+        <VaultLoadingNote what="Tasks from notes still being read are missing." />
         <div className="todos-head">
           <h1>Todos</h1>
         </div>

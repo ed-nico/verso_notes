@@ -29,11 +29,13 @@ import {
   TAGS_DIR
 } from '../lib/supertags'
 import { dateSuggestions, formatLong } from '../lib/dates'
+import { FILE_LINK_RE } from '@shared/media'
 import { QueryView } from './QueryView'
 import { QueryBuilder } from './QueryBuilder'
 import { FormatBar } from './FormatBar'
 import { clearFormatter, setFormatter, type Formatter } from '../lib/formatbus'
 import { BaseEmbed } from './BaseView'
+import { NoteEmbed } from './NoteEmbed'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
 import { MermaidBlock } from './MermaidBlock'
 import { MathBlock } from './Math'
@@ -87,7 +89,8 @@ const SLASH_COMMANDS: { cmd: string; label: string; icon: string }[] = [
   { cmd: 'math', label: 'Math block', icon: '∑' },
   { cmd: 'mermaid', label: 'Mermaid diagram', icon: '◇' },
   { cmd: 'query', label: 'Query — find notes or lines…', icon: '⌕' },
-  { cmd: 'base', label: 'Embed a saved Base view', icon: '▦' }
+  { cmd: 'base', label: 'Embed a saved Base view', icon: '▦' },
+  { cmd: 'embed', label: 'Embed a note — ![[Note]]', icon: '❐' }
 ]
 
 /** Typing one of these while text is selected wraps the selection instead of replacing it. */
@@ -1464,6 +1467,8 @@ export function BlockEditor({
     if (cmd === 'math') return patchById(id, { type: 'paragraph', text: MATH_TEMPLATE }, 2)
     if (cmd === 'query') return setQb({ id, initial: '' })
     if (cmd === 'base') return patchById(id, { text: '{{base }}' }, 7)
+    // Caret lands inside the brackets, where `[[`-autocomplete takes over.
+    if (cmd === 'embed') return patchById(id, { type: 'paragraph', text: '![[]]' }, 3)
     if (cmd === 'todo') return patchById(id, { type: 'task', checked: false, text: '' }, 0)
     if (cmd === 'bullet') return patchById(id, { type: 'bullet', ordered: false, text: '' }, 0)
     if (cmd === 'numbered') return patchById(id, { type: 'bullet', ordered: true, text: '' }, 0)
@@ -1830,6 +1835,14 @@ export function BlockEditor({
     if (queryM) return <QueryView raw={queryM[1].trim()} onEdit={() => setQb({ id: b.id, initial: queryM[1].trim() })} />
     const baseM = b.type !== 'code' && b.text.match(/^\{\{base\s+([^}]+)\}\}\s*$/i)
     if (baseM) return <BaseEmbed raw={baseM[1].trim()} />
+    // `![[Note]]` alone on a line embeds that note, read-only. An `![[file.png]]`
+    // is an ASSET embed and keeps its existing rendering — only note targets are
+    // transcluded here.
+    const embedM = b.type !== 'code' && b.type !== 'table' && b.text.trim().match(/^!\[\[([^\]\n]+?)\]\]$/)
+    if (embedM) {
+      const target = embedM[1].split('|')[0].trim()
+      if (target && !FILE_LINK_RE.test(target)) return <NoteEmbed raw={target} host={path} />
+    }
     // A block that's just a video URL (or `{{video <url>}}`) renders an in-app player.
     if (b.type !== 'code' && b.type !== 'table') {
       const t = b.text.trim()

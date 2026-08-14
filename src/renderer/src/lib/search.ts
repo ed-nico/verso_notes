@@ -56,22 +56,47 @@ interface BodyDoc {
 }
 const bodyCache = new Map<string, BodyDoc>()
 
+/**
+ * Character budget for the cache. Each entry holds a stripped body AND a lowercased
+ * copy of it, so an unbounded cache is roughly twice the vault's text on top of the
+ * `texts` map itself — 30 MB on a 7 MB vault, 300 MB on a 70 MB one. Insertion order
+ * makes the Map an LRU-by-age: over budget, the oldest entries go first.
+ *
+ * The budget is deliberately generous. A cap smaller than the working set would
+ * thrash — search re-reads every note on each keystroke, so entries evicted at the
+ * start of a pass would be recomputed before the pass ends.
+ */
+const BODY_BUDGET = 40_000_000
+let bodyChars = 0
+
 /** Empty the cache — call when switching vaults so notes can't leak across. */
 export function clearSearchCache(): void {
   bodyCache.clear()
+  bodyChars = 0
 }
 
 /** Drop one note from the cache (on delete/rename). */
 export function dropFromSearchCache(path: string): void {
+  const hit = bodyCache.get(path)
+  if (hit) bodyChars -= hit.body.length * 2
   bodyCache.delete(path)
 }
 
 function bodyOf(path: string, text: string, fast: boolean): BodyDoc {
   const hit = bodyCache.get(path)
   if (hit && hit.text === text) return hit
+  if (hit) bodyChars -= hit.body.length * 2
   const body = fast ? stripFrontmatterFast(text) : stripFrontmatter(text)
   const doc: BodyDoc = { text, body, lower: body.toLowerCase() }
   bodyCache.set(path, doc)
+  bodyChars += body.length * 2
+  while (bodyChars > BODY_BUDGET) {
+    const oldest = bodyCache.keys().next()
+    if (oldest.done || oldest.value === path) break // never evict what we just stored
+    const victim = bodyCache.get(oldest.value)!
+    bodyChars -= victim.body.length * 2
+    bodyCache.delete(oldest.value)
+  }
   return doc
 }
 

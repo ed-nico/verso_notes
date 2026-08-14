@@ -17,6 +17,14 @@ import {
   type QueryResult
 } from './query'
 
+/** Word scanner for the unlinked-mention pass, plus the boundary classes the old
+ *  single alternation encoded inline. A mention may not start after a word char,
+ *  `[` (already a wikilink), `/` (a path) or `#` (a tag), and may not be followed
+ *  by a word char, `]` or `/`. */
+const WORD_RE = /\w+/g
+const LEFT_BOUND_BAD = /[\w[/#]/
+const RIGHT_BOUND_BAD = /[\w\]/]/
+
 /** A single backlink: a source note that links to the current note. */
 export interface Backlink {
   sourcePath: string
@@ -363,12 +371,17 @@ export class VaultIndex {
   // so a content edit re-scans exactly the note you typed in, and the target
   // view is regrouped in O(mentions) rather than O(vault text).
 
-  /** Combined `name1|name2|…` matcher, built once per index (the name set is
-   *  fixed for an index's lifetime — a rename changes the file set, which forces
-   *  a full rebuild rather than a patch). */
-  private mentionRe: RegExp | null = null
   /** lowercased note name -> every path carrying it (duplicate basenames all match). */
   private byNameLower = new Map<string, string[]>()
+  /** Lowercased names bucketed by their leading `\w+` run, longest name first.
+   *  This is what makes the mention scan independent of vault SIZE: a candidate
+   *  name can only start where a word starts, so one lookup per word in the text
+   *  replaces trying every name in the vault against every line. */
+  private byFirstWord = new Map<string, string[]>()
+  /** Names that don't begin with a word character (`.env`, `→ inbox`) can't be
+   *  found by the word index — they keep the old alternation, over just those few. */
+  private oddRe: RegExp | null = null
+  private mentionIndexBuilt = false
   /** source path -> unlinked mentions found in it. Filled lazily, per note. */
   private mentionsBySource = new Map<string, Backlink[]>()
   /** Sources whose cached scan is out of date (their text changed). */
@@ -376,37 +389,51 @@ export class VaultIndex {
   /** target path -> mentions of it, regrouped from `mentionsBySource`. Null = needs rebuild. */
   private unlinkedByTarget: Map<string, Backlink[]> | null = null
 
-  /** Build (once) the combined name matcher and the name -> paths lookup. */
-  private ensureMentionRe(): RegExp | null {
-    if (this.mentionRe) return this.mentionRe
+  /** Build (once) the name -> paths lookup and the word index over it. */
+  private ensureMentionIndex(): void {
+    if (this.mentionIndexBuilt) return
+    this.mentionIndexBuilt = true
     this.byNameLower.clear()
+    this.byFirstWord.clear()
     for (const n of this.notesByPath.values()) {
-      if (!n.name) continue // an empty alternative would match everywhere
+      if (!n.name) continue // an empty name would match everywhere
       const k = n.name.toLowerCase()
       const arr = this.byNameLower.get(k)
       if (arr) arr.push(n.path)
       else this.byNameLower.set(k, [n.path])
     }
-    const names = [...this.byNameLower.keys()]
-    if (!names.length) return null
-    const alt = names
-      .map(escapeRegExp)
-      .sort((a, b) => b.length - a.length) // longest first, so "Deep Work" beats "Work"
-      .join('|')
-    // Left boundary excludes `#` so a #tag carrying the name isn't a "mention".
-    // The right boundary is a LOOKAHEAD (not a consumed char) so back-to-back
-    // mentions — "Alpha Beta" — both match under the global regex.
-    this.mentionRe = new RegExp(`(^|[^\\w[/#])(${alt})(?![\\w\\]/])`, 'gi')
-    return this.mentionRe
+    const odd: string[] = []
+    for (const name of this.byNameLower.keys()) {
+      const first = /^\w+/.exec(name)
+      if (!first) {
+        odd.push(name)
+        continue
+      }
+      const bucket = this.byFirstWord.get(first[0])
+      if (bucket) bucket.push(name)
+      else this.byFirstWord.set(first[0], [name])
+    }
+    // Longest first, so "Deep Work" beats "Deep" at the same position — the same
+    // precedence the single alternation used to get from its own ordering.
+    for (const bucket of this.byFirstWord.values()) bucket.sort((a, b) => b.length - a.length)
+    this.oddRe = odd.length
+      ? new RegExp(
+          `(^|[^\\w[/#])(${odd
+            .map(escapeRegExp)
+            .sort((a, b) => b.length - a.length)
+            .join('|')})(?![\\w\\]/])`,
+          'gi'
+        )
+      : null
   }
 
   /** Every unlinked mention appearing IN `sourcePath`, one row per (target, line).
    *  Mentions inside `#tags`, code (fenced or inline), or frontmatter don't count:
    *  linking those would corrupt them (frontmatter/code) or double-mark them (tags). */
   private scanMentions(sourcePath: string): Backlink[] {
-    const re = this.ensureMentionRe()
+    this.ensureMentionIndex()
     const out: Backlink[] = []
-    if (!re) return out
+    if (!this.byFirstWord.size && !this.oddRe) return out
     const sourceName = this.nameByPath.get(sourcePath) ?? sourcePath
     const { body, bodyLine } = parseFrontmatter(this.texts[sourcePath] ?? '')
     const skip = codeRanges(body)
@@ -424,15 +451,13 @@ export class VaultIndex {
       const stripped = line.replace(/\[\[[^\]\n]*\]\]/g, '').replace(/`[^`\n]+`/g, '')
       if (!stripped.trim()) continue
       let seen: Set<string> | null = null // one row per target per line
-      re.lastIndex = 0
-      let m: RegExpExecArray | null
-      while ((m = re.exec(stripped))) {
-        const targets = this.byNameLower.get(m[2].toLowerCase())
-        if (!targets) continue
+      const record = (nameLower: string): void => {
+        const targets = this.byNameLower.get(nameLower)
+        if (!targets) return
         for (const target of targets) {
           if (target === sourcePath) continue
           seen ??= new Set<string>()
-          if (seen.has(target)) continue
+          if (seen.has(target)) continue // other targets of this name may still be new
           seen.add(target)
           out.push({
             sourcePath,
@@ -442,6 +467,51 @@ export class VaultIndex {
             line: bodyLine + i
           })
         }
+      }
+      // One pass over the line's WORDS. A name can only begin where a word begins
+      // (names that don't are handled by `oddRe` below), so each word costs one
+      // map lookup plus a compare against the few names sharing its first word —
+      // instead of the whole vault's names being tried against the whole line.
+      // Lowercase the line ONCE. Doing it per word instead costs an allocation for
+      // every word in the vault, which was measurably slower than the alternation
+      // this replaced. Case folding can change a string's length (a handful of
+      // Unicode chars expand), which would drift every offset — so the folded line
+      // is only used when it aligns, and the rare line that doesn't folds per word.
+      // Fold the line ONCE, then walk its words. Folding per word instead costs an
+      // allocation for every word in the vault and measured 50% slower; a bitmask
+      // prefilter on (initial, length) was also tried and filters nothing once a
+      // vault has a few thousand names. Case folding can change a string's length
+      // (a handful of Unicode chars expand), which would drift every offset — so
+      // the folded line is used only when it aligns, and the rare line that doesn't
+      // falls back to folding candidates individually.
+      const lower = stripped.toLowerCase()
+      const lc = lower.length === stripped.length
+      const hay = lc ? lower : stripped
+      WORD_RE.lastIndex = 0
+      let consumedTo = 0
+      let t: RegExpExecArray | null
+      while ((t = WORD_RE.exec(hay))) {
+        const s = t.index
+        if (s < consumedTo) continue // the previous match already covered this word
+        const bucket = this.byFirstWord.get(lc ? t[0] : t[0].toLowerCase())
+        if (!bucket) continue
+        // Left boundary excludes `#` so a #tag carrying the name isn't a mention.
+        if (s > 0 && LEFT_BOUND_BAD.test(hay[s - 1])) continue
+        for (const name of bucket) {
+          const end = s + name.length
+          const cand = hay.slice(s, end)
+          if ((lc ? cand : cand.toLowerCase()) !== name) continue
+          const after = hay[end]
+          if (after !== undefined && RIGHT_BOUND_BAD.test(after)) continue
+          record(name)
+          consumedTo = end // non-overlapping, as the old global regex was
+          break // longest name at this position wins
+        }
+      }
+      if (this.oddRe) {
+        this.oddRe.lastIndex = 0
+        let m: RegExpExecArray | null
+        while ((m = this.oddRe.exec(stripped))) record(m[2].toLowerCase())
       }
     }
     return out

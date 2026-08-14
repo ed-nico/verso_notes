@@ -2,6 +2,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import ForceGraph2D from './LazyForceGraph'
 import { useStore } from '../store'
 import type { GraphNode, GraphLink } from '../lib/vault'
+import { VaultLoadingNote } from './VaultLoading'
 
 /** A force-graph link's endpoint is a node id until the lib mutates it into a node object. */
 const endpointId = (e: unknown): string =>
@@ -66,6 +67,12 @@ export function GraphView(): React.JSX.Element {
   const [showOrphans, setShowOrphans] = useState(true)
   const [showUnresolved, setShowUnresolved] = useState(true)
   const [showLabels, setShowLabels] = useState(false)
+  /** 0 = no cap. Persisted: someone who has raised it on a big vault shouldn't
+   *  have to raise it again every time they open the graph. */
+  const [maxNodes, setMaxNodes] = useState(() => {
+    const v = Number(localStorage.getItem('verso-graph-max'))
+    return Number.isFinite(v) && v >= 0 ? v : 1500
+  })
   const [nodeSize, setNodeSize] = useState(1)
   const [linkDist, setLinkDist] = useState(40)
   const [repel, setRepel] = useState(60)
@@ -113,8 +120,18 @@ export function GraphView(): React.JSX.Element {
       }
       nodes = nodes.filter((n) => linked.has(n.id))
     }
-    return { nodes, links } as { nodes: GraphNode[]; links: GraphLink[] }
-  }, [data, showOrphans, showUnresolved])
+    // A force simulation is O(nodes²)-ish per tick: a few thousand notes stops
+    // being a picture and starts being a hairball that won't hold a frame rate.
+    // Keep the most-connected nodes, which is also the readable half of a graph.
+    let capped = 0
+    if (maxNodes && nodes.length > maxNodes) {
+      capped = nodes.length - maxNodes
+      nodes = [...nodes].sort((a, b) => b.degree - a.degree).slice(0, maxNodes)
+      const ids = new Set(nodes.map((n) => n.id))
+      links = links.filter((l) => ids.has(endpointId(l.source)) && ids.has(endpointId(l.target)))
+    }
+    return { nodes, links, capped } as { nodes: GraphNode[]; links: GraphLink[]; capped: number }
+  }, [data, showOrphans, showUnresolved, maxNodes])
 
   // Nodes matching the search box (null when the box is empty → no highlighting).
   const matched = useMemo(() => {
@@ -151,6 +168,7 @@ export function GraphView(): React.JSX.Element {
 
   return (
     <div className="graph-wrap" ref={wrapRef}>
+      <VaultLoadingNote what="Nodes and links keep appearing as it finishes." />
       <div className="graph-controls">
         <input
           className="graph-search"
@@ -175,6 +193,22 @@ export function GraphView(): React.JSX.Element {
             <label className="graph-opt">
               <input type="checkbox" checked={showUnresolved} onChange={(e) => setShowUnresolved(e.target.checked)} />
               Unresolved notes
+            </label>
+            <label className="graph-opt col">
+              <span>Most connected</span>
+              <select
+                value={maxNodes}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  setMaxNodes(v)
+                  localStorage.setItem('verso-graph-max', String(v))
+                }}
+              >
+                <option value={500}>Top 500</option>
+                <option value={1500}>Top 1,500</option>
+                <option value={4000}>Top 4,000</option>
+                <option value={0}>All notes</option>
+              </select>
             </label>
 
             <div className="graph-panel-group">Display</div>
@@ -220,6 +254,7 @@ export function GraphView(): React.JSX.Element {
 
             <div className="graph-panel-foot">
               {shown.nodes.length} nodes · {shown.links.length} links
+              {shown.capped > 0 && ` · ${shown.capped.toLocaleString()} hidden`}
             </div>
           </div>
         )}

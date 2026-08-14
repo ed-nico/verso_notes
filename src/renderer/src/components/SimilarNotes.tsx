@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import { useSectionOpen } from './RightSection'
 import { useStore } from '../store'
 import { similarNotes } from '../lib/similar'
 import { basename, dirname, stripMd } from '../lib/links'
@@ -15,7 +16,7 @@ export function SimilarNotes({ path }: { path: string }): React.JSX.Element | nu
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
   const openInSidePane = useStore((s) => s.openInSidePane)
-  const [open, setOpen] = useState(true)
+  const [open, toggle] = useSectionOpen('similar', true)
 
   const hits = useMemo(() => {
     const texts = useStore.getState().texts
@@ -27,7 +28,7 @@ export function SimilarNotes({ path }: { path: string }): React.JSX.Element | nu
 
   return (
     <div className="similar">
-      <button className="rightbar-section-head" onClick={() => setOpen((v) => !v)}>
+      <button className="rightbar-section-head" onClick={toggle}>
         <span className="rightbar-caret">{open ? '▾' : '▸'}</span>
         Similar notes
         <span className="rightbar-section-count">{hits.length}</span>

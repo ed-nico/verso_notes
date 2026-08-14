@@ -36,7 +36,7 @@
   padding: 7px 9px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
 }
 .find-input {
@@ -116,7 +116,7 @@
   padding: 0 7px;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text);
   font-size: 13px;
   line-height: 1;
@@ -497,7 +497,7 @@ mark.tok-mark {
   margin: 4px 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 10px 14px;
   overflow-x: auto;
 }
@@ -595,7 +595,7 @@ mark.tok-mark {
   --callout: var(--accent);
   border: 1px solid color-mix(in srgb, var(--callout) 35%, transparent);
   border-left: 3px solid var(--callout);
-  border-radius: 8px;
+  border-radius: var(--radius);
   background: color-mix(in srgb, var(--callout) 10%, var(--bg-elevated));
   padding: 10px 14px;
   margin: 4px 0;
@@ -665,7 +665,7 @@ mark.tok-mark {
   line-height: 1.5 !important;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 10px 14px;
   white-space: pre;
 }
@@ -694,7 +694,7 @@ mark.tok-mark {
   white-space: pre;
   background: var(--bg-elevated);
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 10px 14px;
   color: var(--text);
 }
@@ -813,7 +813,7 @@ select.prop-input {
 .prop-add {
   background: transparent;
   border: 1px dashed var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   font-size: 12px;
   padding: 6px 10px;
@@ -826,4 +826,18 @@ select.prop-input {
 }
 .prop-newkey {
   margin-top: 6px;
+}
+
+/* Empty state for the references panel — an explanation, not just a negative. */
+.bl-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 6px 0 14px;
+  max-width: 60ch;
+}
+.bl-empty code {
+  background: var(--bg-elevated);
+  border-radius: 3px;
+  padding: 0 4px;
 }

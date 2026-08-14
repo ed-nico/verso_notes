@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { newBase, type Base, type Filter, type FilterOp } from '../lib/bases'
 import { BaseView, baseRows, cellValue, label } from './BaseView'
+import { VaultLoadingNote } from './VaultLoading'
 
 const BUILTINS = ['name', 'cover', 'tags', 'backlinks']
 const OPS: FilterOp[] = ['contains', 'is', 'is not', '>', '<', '>=', '<=', 'exists', 'empty']
@@ -105,6 +106,7 @@ export function BasesView(): React.JSX.Element {
   return (
     <div className="scroll-area">
       <div className="bases">
+        <VaultLoadingNote what="Rows are still arriving." />
         <div className="bases-bar">
           <div className="bases-tabs">
             {bases.map((b) => (

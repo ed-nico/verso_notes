@@ -58,7 +58,12 @@ renderer (React)  ──window.verso──▶  preload (contextBridge)  ──ip
 - **`src/main/index.ts`** — window creation, IPC handlers, CSP (permissive in dev, strict in
   prod), and the `verso://` custom protocol that serves workspace assets (images/PDFs) to
   the renderer. Remembers the last workspace in `userData/verso-prefs.json`.
-- **`src/main/workspace.ts`** — all disk access, scoped to the chosen workspace root. All
+- **`src/main/workspace.ts`** — all disk access, scoped to the chosen workspace root.
+  Also owns the **persistent parse cache** (`userData/parse-cache/<hash>.json`): the renderer
+  hands back what it parsed, keyed by (mtime, size) + app version, and `readNotesCached`
+  returns it next launch so only CHANGED files are re-parsed. It is only ever an
+  optimisation — every miss behaves exactly like `readNotes`. Disabled in dev
+  (`ELECTRON_RENDERER_URL` set), because editing `parse.ts` would otherwise leave a stale cache. All
   writes are atomic (`atomicWrite`: temp file + rename) and return a `WriteResult`
   (`{ok} | {ok:false,error}`) so the renderer can surface failures. A chokidar watcher
   forwards `add`/`change`/`unlink`/`rename` (paired unlink+add) as `file-event` IPC pushes —
@@ -113,8 +118,18 @@ Key invariants and patterns:
   localStorage for vault data — it splits between the dev (`localhost`) and packaged (`file://`) origins.
 - Navigation is panes, not tabs: a main pane (with back/forward `history`, capped at 200
   steps) plus any number of right-hand splits (`sidePanes: SidePane[]` — cmd-clicked notes /
-  open PDFs; `closeSidePane(i?)` closes one). `view` switches the main pane between the
+  open PDFs; `closeSidePane(i?)` closes one, `promoteSidePane(i)` moves a note split into
+  the main pane — via `openNote`, so whatever the main pane was showing is one Back away
+  rather than being swapped into the split, which a base/journal/graph view couldn't be).
+  `view` switches the main pane between the
   editor and the graph/bases/journal/todos/assets/tags screens.
+- Right panel: every block is a `RightSection` (`components/RightSection.tsx`) whose
+  open/closed state persists in localStorage. It has to persist — the panels are keyed by
+  note path and remount on every navigation, so component state alone forgot the choice
+  the moment you opened another note.
+- **`lib/keymap.ts`** is the one table of app shortcuts; Help renders its key sections from
+  it and `keymap.test.ts` fails the build if a chord is bound to two different actions in a
+  scope. Add a binding there as well as in the handler.
 - Chrome: `sidebarWidth` / `rightbarWidth` (drag a panel's inner edge —
   `components/ResizeHandle.tsx`; clamped on READ as well as write, so a stale width can't
   strand a handle off-screen) persist in localStorage and reach the layout as the
@@ -191,6 +206,11 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   `math.test.ts`; its guards are what keep "it costs $5 and $10" from rendering as math.
   Display math is matched in `renderRich` off paragraph text (like `---` → `<hr>`) rather than
   being a `BlockType`, so it stays plain text on disk.
+- **`components/NoteEmbed.tsx`** + **`NotePreview.tsx`** — `![[Note]]` alone on a line
+  renders that note inline, read-only, via the same `renderNote` the ⌘-hover preview uses.
+  Note-level only: block references stay removed. Recursion is guarded by an `EmbedChain`
+  context seeded with the HOST note (`host` prop), which is what stops `![[Self]]`; nesting
+  works because `renderNote` takes a `renderEmbed` callback (the hover preview doesn't pass one).
 - **`components/InlineMarkdown.tsx`** (`renderInline`) — renders inline markdown (bold,
   links, tags) for non-focused blocks, backlinks, todos, and previews. Pass `noPreview` to
   suppress the ⌘-hover link preview (used inside the preview popup to avoid recursion).
@@ -204,6 +224,11 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   tags, excerpt), code-aware so `[[ ]]`/`#` inside code blocks are ignored.
 - **`vault.ts`** (`VaultIndex`) — built from all parsed notes; computes backlinks, unlinked
   references, and graph data (`GraphNode`/`GraphLink`, including phantom/unresolved notes).
+  Unlinked references are found with a WORD INDEX (names bucketed by their leading
+  `\w+` run, longest first), not one alternation of every note name — that regex grew
+  with the vault and cost 10.5s at 41k notes. The line is lowercased ONCE per line, not
+  per word: folding per word, and a (initial, length) bitmask prefilter, were both tried
+  and measured slower. Names not starting with a word char keep a small fallback regex.
   **`withContentChanges` is not a snapshot API**: the handle it returns aliases the
   receiver's derived maps (that's what makes the patch O(edited notes)), so the old handle is
   *superseded*, not preserved. Never hold an index across a rebuild expecting frozen data;
@@ -231,6 +256,10 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   term: it's read as a property name, so `sort:-Year` orders by frontmatter (degrading it
   made the query silently search for the literal text "sort:-year").
   `runQuery` returns the shaped `QueryResult` — `blocks` XOR `notes`.
+- **`isStructuredQuery`** is the switch behind ONE search box: plain words go to
+  `search.ts` (fuzzy name + full text), anything using query syntax goes to the query
+  engine (the sidebar appends `scope:notes` unless the text names a scope). Bare
+  `todo`/`done` deliberately don't count as syntax — they're ordinary words people search for.
 - **`components/QueryBuilder.tsx`** — the visual builder behind `/query` and the `⚙ edit`
   button on a rendered query. It COMPOSES the query string and re-seeds itself from one
   (`condsFrom`); the text stays the source of truth and remains hand-editable, so nothing the
@@ -313,6 +342,13 @@ note passes `toolbar="always"` and renders its own bound bar instead.
 - Adding an IPC call means touching four files in order: `shared/types.ts` (`VersoApi`) →
   `preload/index.ts` → `main/index.ts` (`registerIpc`) → `main/workspace.ts`.
 - Import aliases: `@/*` → `src/renderer/src/*`, `@shared/*` → `src/shared/*`.
+- Design tokens (`styles/base.css`): the dark ground is WARM (hue ~35°) — a cool grey
+  anywhere in the set gives the whole palette away. `--border`/`--border-strong` are a
+  `color-mix` TINT OF `--text`, not their own greys, so a hairline belongs to whatever
+  surface it's on; `--sel-bg` is a low-opacity accent tint (a selected row gets a tint plus
+  a 2px spine, never a solid accent block). Radii come from `--radius-sm/--radius/--radius-lg`.
+  Note that `getComputedStyle` returns `--border` as the literal `color-mix(…)` string —
+  the graph canvases pass it straight to canvas, which parses it fine.
 - `styles.css` is just an ordered list of `@import`s from `styles/` (Vite inlines them).
   **The order is load-bearing** — later files, notably the light-theme overrides, depend on
   following earlier ones. Move a rule between files only if it keeps its relative position.

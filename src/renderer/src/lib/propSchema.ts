@@ -37,10 +37,16 @@ interface SchemaSource {
  *  but a STABLE one (hydration order isn't). */
 export function vaultPropSchemas(notes: Iterable<SchemaSource>): Record<string, PropSchema> {
   const out: Record<string, PropSchema> = {}
-  const sorted = [...notes].sort((a, b) => a.path.localeCompare(b.path))
-  for (const n of sorted) {
+  // Filter BEFORE sorting: a handful of notes in a vault define options, and
+  // sorting the whole vault to order three of them was the bulk of the cost.
+  const definers: SchemaSource[] = []
+  for (const n of notes) {
     const raw = n.frontmatter._options
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) definers.push(n)
+  }
+  definers.sort((a, b) => a.path.localeCompare(b.path))
+  for (const n of definers) {
+    const raw = n.frontmatter._options
     for (const [key, list] of Object.entries(raw as Record<string, unknown>)) {
       if (out[key] || !Array.isArray(list) || list.length === 0) continue
       out[key] = {
@@ -51,6 +57,25 @@ export function vaultPropSchemas(notes: Iterable<SchemaSource>): Record<string, 
     }
   }
   return out
+}
+
+let memoSrc: object | null = null
+let memoOut: Record<string, PropSchema> = {}
+
+/**
+ * Vault schemas for the store's `parsed` map, memoised on that map's IDENTITY.
+ *
+ * The properties panel and every base — including each `{{base}}` embedded in the
+ * note on screen — needs this, and each was walking the vault for itself on every
+ * rebuild. They can all share one computation because `parsed` is replaced rather
+ * than mutated whenever its contents change (unlike `texts`), so its identity is
+ * exactly the right cache key.
+ */
+export function propSchemasFor(parsed: Record<string, SchemaSource>): Record<string, PropSchema> {
+  if (memoSrc === parsed) return memoOut
+  memoSrc = parsed
+  memoOut = vaultPropSchemas(Object.values(parsed))
+  return memoOut
 }
 
 /** Write back the `_options` map with `key` set (or cleared when empty). Mirrors

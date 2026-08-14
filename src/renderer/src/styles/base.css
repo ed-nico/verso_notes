@@ -9,16 +9,36 @@
 :root {
   /* Tells the OS to draw native scrollbars / form controls dark; the light theme flips it. */
   color-scheme: dark;
-  --bg: #151519;
-  --bg-panel: #1a1a1f;
-  --bg-elevated: #202026;
-  --bg-hover: #26262e;
-  --border: #2b2b33;
-  --text: #e2e2e8;
+  /* A WARM dark ground (hue ~35°, very low saturation) rather than the neutral
+     blue-grey charcoal this used to be. Screens of text sit on this surface for
+     hours; a warm ground reads as paper-under-lamplight where a cool one reads as
+     a terminal. The shift is small in numbers and large in feel — and it's why
+     the greys below are warm too: one cool grey in the set gives the whole
+     palette away. */
+  --bg: #191714;
+  --bg-panel: #1e1c19;
+  --bg-elevated: #26231f;
+  --bg-hover: #2d2a25;
+  --text: #eae7e1;
   /* Secondary/tertiary text kept clearly legible on the dark canvas — Eds found
      the dimmer greys hard to read; prefer erring brighter for these two. */
-  --text-dim: #a6a6b2;
-  --text-faint: #75757f;
+  --text-dim: #aba69c;
+  --text-faint: #7c766c;
+  /* Borders are a TINT OF THE TEXT, not their own grey, so every rule is a
+     hairline that belongs to whatever surface it's drawn on — and one that stays
+     correct when a surface changes. A solid grey line at full strength was the
+     single busiest thing in the old chrome; there are a lot of these on screen. */
+  --border: color-mix(in srgb, var(--text) 13%, transparent);
+  --border-strong: color-mix(in srgb, var(--text) 22%, transparent);
+  /* Selection fill for list rows. A tint plus accent-coloured text, NOT a solid
+     accent block with white text: the file you happen to have open is the least
+     important information on screen and used to be the loudest thing on it. */
+  --sel-bg: color-mix(in srgb, var(--accent) 16%, transparent);
+  --sel-text: var(--text);
+  /* One radius scale, so a menu, a card and a button agree. */
+  --radius-sm: 6px;
+  --radius: 9px;
+  --radius-lg: 12px;
   --accent: #7c8cff;
   --accent-dim: #4a4f7a;
   --link: #8fa1ff;
@@ -83,7 +103,7 @@ body {
   background: color-mix(in srgb, var(--text-dim) 45%, transparent);
   border: 3px solid transparent;
   background-clip: padding-box;
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--text-dim) 75%, transparent);

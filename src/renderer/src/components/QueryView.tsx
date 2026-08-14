@@ -197,7 +197,10 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
       </div>
       {total === 0 && (
         <div className="queryview-empty">
-          {spec.scope === 'notes' ? 'No matching notes' : 'No matching blocks'}
+          {spec.scope === 'notes' ? 'No matching notes.' : 'No matching blocks.'}{' '}
+          {spec.scope === 'blocks'
+            ? 'A query matches LINES by default — add scope:notes to match whole notes (including ones whose tags live only in frontmatter).'
+            : 'Try removing a term: within a group every term must match.'}
         </div>
       )}
       {groups

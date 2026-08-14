@@ -198,6 +198,15 @@ export function Backlinks({ path }: { path: string }): React.JSX.Element {
         </div>
       </div>
 
+      {/* A bare "No linked references" heading is a dead end: it states a fact and
+          leaves you without the one move that changes it. */}
+      {linked.length === 0 && (
+        <p className="bl-empty">
+          Nothing links here yet. Type <code>[[</code> in another note and pick this one — or check the unlinked
+          references below, which are notes that mention its name without linking.
+        </p>
+      )}
+
       {linked.length > 0 && (
         <div className="bl-section">
           <SectionHead open={showLinked} count={linked.length} label="linked reference" onToggle={() => setShowLinked((v) => !v)} />

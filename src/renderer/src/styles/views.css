@@ -109,11 +109,55 @@
   padding: 24px 32px;
 }
 
+/* ---------- ![[Note]] embed ---------- */
+/* Framed like the other embeds ({{query}}, {{base}}) so a page built out of them
+   reads as one document with visible seams, rather than as pasted-in copies. */
+.note-embed {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent-dim);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  padding: 8px 14px 10px;
+}
+.note-embed.missing {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border-left-color: var(--border);
+  color: var(--text-dim);
+}
+.note-embed-title {
+  display: block;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.note-embed-title:hover {
+  color: var(--accent);
+}
+.note-embed-note {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+/* The embedded note is rendered by the same read-only renderer as the hover
+   preview (`.hp-*`), so it only needs its cramped popup metrics relaxed. */
+.note-embed-body .hp-block {
+  font-size: inherit;
+  line-height: 1.55;
+}
+
 /* Inline {{base …}} embed — a read-only slice of a base inside a note. */
 .base-embed {
   margin: 8px 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 10px 12px;
   background: var(--bg-panel);
 }
@@ -242,6 +286,15 @@
   padding: 0 32px 32px;
 }
 
+/* A base over a whole vault is one row per note. Skip the layout and paint of the
+   rows that are offscreen — same reasoning as `.file-item` and the editor's
+   `.bl-cv`. `content-visibility` is skipped on a row holding an open Select menu:
+   the containment it brings would clip the dropdown. */
+.db-view tbody tr:not(.db-group):not(:has(.sel-menu)) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 34px;
+}
+
 /* ---------- Assets ---------- */
 .assets {
   max-width: 1000px;
@@ -294,7 +347,7 @@
   width: 44px;
   height: 44px;
   object-fit: cover;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   display: block;
 }
@@ -304,7 +357,7 @@
   justify-content: center;
   width: 44px;
   height: 44px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-dim);
   font-size: 11px;
@@ -328,7 +381,7 @@
   color: var(--link);
   cursor: pointer;
   background: var(--bg-elevated);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 1px 8px;
   margin: 1px 4px 1px 0;
   font-size: 12px;
@@ -407,7 +460,7 @@
 .btn-sm {
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   padding: 5px 12px;
   font-size: 12px;
@@ -564,7 +617,7 @@
   text-align: left;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   color: var(--text-dim);
   padding: 4px 10px 4px 26px;
   font-size: 12px;
@@ -579,4 +632,44 @@
 }
 .nav-subitem.active {
   color: var(--accent);
+}
+
+/* "This screen is built from the whole vault, which isn't all read yet." Shown by
+   every vault-wide view while hydration runs (components/VaultLoading). */
+.vault-loading-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-panel);
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.vault-loading-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  animation: vault-pulse 1.4s ease-in-out infinite;
+}
+@keyframes vault-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vault-loading-dot { animation: none; opacity: 0.7; }
+}
+/* Inside the graph the notice floats over the canvas rather than displacing it. */
+.graph-wrap .vault-loading-note {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 5;
+  margin: 0;
+  background: var(--bg-elevated);
 }

@@ -302,6 +302,27 @@ function parseToken(tok: string, links: { negated: boolean; page: string }[]): A
   return { kind: 'term', negated, value: tok.toLowerCase() }
 }
 
+/**
+ * True when `raw` uses query SYNTAX rather than being plain words — the test that
+ * lets one search box serve both jobs: plain text keeps the fuzzy-name/full-text
+ * search, anything with an operator goes to the query engine.
+ *
+ * Bare `todo`/`done` deliberately do NOT count. They're ordinary English words and
+ * far more people type "todo" into a search box meaning the word than meaning the
+ * filter; `#tag todo` still reaches the filter, because the tag already announced
+ * that this is a query.
+ */
+export function isStructuredQuery(raw: string): boolean {
+  if (!raw.trim()) return false
+  const spec = parseQuery(raw)
+  if (spec.groups.length > 1) return true
+  if (spec.sort || spec.groupBy || spec.limit !== undefined || spec.cols) return true
+  if (spec.scope !== 'blocks' || spec.layout !== 'list') return true
+  return spec.groups.some((g) =>
+    g.atoms.some((a) => a.negated || a.kind === 'tag' || a.kind === 'link' || a.kind === 'date' || a.kind === 'prop')
+  )
+}
+
 /** Strip markdown markers so a block reads as plain text. */
 function clean(line: string): string {
   return line
