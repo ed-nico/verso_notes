@@ -83,7 +83,6 @@ function CanvasSurface({ path }: { path: string }): React.JSX.Element {
   const openNote = useStore((s) => s.openNote)
   const canvasName = useStore((s) => s.canvases.find((c) => c.path === path)?.name ?? 'Canvas')
   const renameCanvas = useStore((s) => s.renameCanvas)
-  const deleteCanvas = useStore((s) => s.deleteCanvas)
 
   const [doc, setDoc] = useState<CanvasDoc>(emptyDoc)
   const [loaded, setLoaded] = useState(false)

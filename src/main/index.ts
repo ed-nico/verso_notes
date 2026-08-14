@@ -13,15 +13,21 @@ import {
   deleteNote,
   listAssets,
   listCanvases,
+  listSnapshots,
   openWorkspaceAt,
+  readSnapshot,
   readBases,
   readCanvas,
   readCustomCss,
   renameCanvas,
   writeBases,
   writeCanvas,
-  readAllNotes,
+  MEDIA_EXTS,
   readNote,
+  readNotes,
+  readNotesCached,
+  saveParseCache,
+  flushParseCacheNow,
   readUserDictionary,
   renameNote,
   resolveAsset,
@@ -33,9 +39,14 @@ import { addIgnoreWord, checkWords, setIgnoreWords, suggestWord } from './spell.
 
 // Must run before app is ready: lets `verso://` load in <img> and via fetch.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'verso', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } }
+  {
+    scheme: 'verso',
+    // corsEnabled: without it, cors-mode fetch() (pdf.js) gets an opaque status-0
+    // response — <img>/<video> don't care, but the PDF viewer breaks.
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true }
+  }
 ])
-import type { NoteContent, WriteResult } from '../shared/types.js'
+import type { CachedNoteContent, NoteContent, WriteResult } from '../shared/types.js'
 import { PROD_CSP } from '../shared/csp.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -125,6 +136,35 @@ function createWindow(): void {
   })
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
+
+  // Closing the window (or ⌘Q) must not race the debounced save pipeline: a write
+  // queued behind an in-flight IPC would never dispatch once the renderer dies.
+  // Intercept close, ask the renderer to flush and ack, then really close. A dead
+  // renderer can't hold the window hostage — a short timeout force-closes.
+  let flushed = false
+  let quitting = false
+  // preventDefault() on `close` during a quit CANCELS the quit on macOS — note
+  // that we're mid-quit so we can resume it once the flush lands.
+  app.once('before-quit', () => {
+    quitting = true
+  })
+  mainWindow.on('close', (e) => {
+    const win = mainWindow
+    if (flushed || !win || win.webContents.isDestroyed()) return
+    e.preventDefault()
+    const finish = (): void => {
+      if (flushed) return
+      flushed = true
+      win.destroy()
+      if (quitting) app.quit() // resume the quit this close interception aborted
+    }
+    const timer = setTimeout(finish, 2000)
+    ipcMain.once('app:flush-done', () => {
+      clearTimeout(timer)
+      finish()
+    })
+    win.webContents.send('flush-request')
+  })
 
   // Forward renderer console + crashes to the terminal so dev errors are visible.
   mainWindow.webContents.on('console-message', (...args: unknown[]) => {
@@ -357,8 +397,21 @@ function registerIpc(): void {
     return text === null ? null : { path: p, text }
   })
 
-  ipcMain.handle('note:readAll', async (): Promise<NoteContent[]> => {
-    return readAllNotes()
+  ipcMain.handle('note:readMany', async (_e, paths: unknown): Promise<NoteContent[]> => {
+    if (!Array.isArray(paths)) return []
+    return readNotes(paths.filter(isStr))
+  })
+
+  ipcMain.handle('note:readManyCached', async (_e, paths: unknown): Promise<CachedNoteContent[]> => {
+    if (!Array.isArray(paths)) return []
+    return readNotesCached(paths.filter(isStr))
+  })
+
+  ipcMain.handle('note:saveParseCache', (_e, entries: unknown): void => {
+    if (!Array.isArray(entries)) return
+    saveParseCache(
+      entries.filter((e): e is { path: string; parsed: unknown } => !!e && isStr((e as { path?: unknown }).path))
+    )
   })
 
   ipcMain.handle('note:write', async (_e, p: string, text: string): Promise<WriteResult> => {
@@ -417,6 +470,84 @@ function registerIpc(): void {
 
   ipcMain.handle('css:read', async () => readCustomCss())
 
+  // Manual update check — ONE GitHub API request, only ever on explicit click
+  // (the README promises no automatic update pings; this keeps that true).
+  ipcMain.handle('app:checkUpdates', async () => {
+    try {
+      const ctrl = new AbortController()
+      const timer = setTimeout(() => ctrl.abort(), 8000)
+      const res = await net.fetch('https://api.github.com/repos/ed-nico/verso_notes/releases/latest', {
+        signal: ctrl.signal,
+        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'Verso' }
+      })
+      clearTimeout(timer)
+      if (!res.ok) return null
+      const json = (await res.json()) as { tag_name?: string; html_url?: string }
+      const latest = (json.tag_name ?? '').replace(/^v/, '')
+      if (!latest) return null
+      return { current: app.getVersion(), latest, url: json.html_url ?? 'https://github.com/ed-nico/verso_notes/releases' }
+    } catch {
+      return null
+    }
+  })
+
+  // First-run onboarding: copy the bundled sample vault somewhere writable and
+  // open it, so a fresh download shows linked notes instead of an empty screen.
+  ipcMain.handle('workspace:demo', async () => {
+    if (!mainWindow) return null
+    try {
+      const src = app.isPackaged
+        ? path.join(process.resourcesPath, 'sample-vault')
+        : path.join(app.getAppPath(), 'sample-vault')
+      const dest = path.join(app.getPath('userData'), 'Demo Vault')
+      try {
+        await fs.access(dest)
+      } catch {
+        await fs.cp(src, dest, { recursive: true })
+      }
+      const ws = await openWorkspaceAt(dest, mainWindow)
+      if (ws) {
+        await rememberWorkspace(dest)
+        setIgnoreWords(await readUserDictionary())
+      }
+      return ws
+    } catch (e) {
+      console.error('[main] workspace:demo failed:', e)
+      return null
+    }
+  })
+
+  // Print the window to PDF. The renderer's @media print rules hide everything
+  // but the open note, so this is "export the current note as PDF".
+  ipcMain.handle('export:pdf', async (_e, suggestedName: string) => {
+    if (!mainWindow || !isStr(suggestedName)) return null
+    const safe = suggestedName.replace(/[/\\:]/g, '-').slice(0, 120) || 'note'
+    const result = await dialog.showSaveDialog(mainWindow, {
+      title: 'Export as PDF',
+      defaultPath: `${safe}.pdf`,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    try {
+      const data = await mainWindow.webContents.printToPDF({
+        printBackground: true,
+        pageSize: 'A4',
+        margins: { top: 0.6, bottom: 0.6, left: 0.6, right: 0.6 }
+      })
+      await fs.writeFile(result.filePath, data)
+      return result.filePath
+    } catch (e) {
+      console.error('[main] export:pdf failed:', e)
+      return null
+    }
+  })
+
+  // Local snapshots (version history) — see workspace.ts.
+  ipcMain.handle('history:list', async (_e, p: string) => (isStr(p) ? listSnapshots(p) : []))
+  ipcMain.handle('history:read', async (_e, p: string, stamp: string) =>
+    isStr(p) && isStr(stamp) ? readSnapshot(p, stamp) : null
+  )
+
   // Fetch a web page's <title> for "smart" link titles on paste. Best-effort: returns
   // null on any failure so the renderer just keeps the bare URL. Public http/https
   // only — local/private hosts are refused so this can't be used to probe the LAN.
@@ -454,9 +585,14 @@ function registerIpc(): void {
         target = new URL(loc, target)
         res = null
       }
-      clearTimeout(timer)
-      if (!res || !res.ok) return null
+      if (!res || !res.ok) {
+        clearTimeout(timer)
+        return null
+      }
+      // Keep the abort timer armed through the BODY read too — a slow-loris server
+      // trickling bytes would otherwise hold the socket (and this promise) forever.
       const html = await readBodyCapped(res, 256 * 1024)
+      clearTimeout(timer)
       const m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)
       if (!m) return null
       const decode = (s: string): string =>
@@ -509,6 +645,13 @@ function applyCsp(): void {
       return false
     }
   }
+  // Electron grants permission requests by default; embedded pages (YouTube/Vimeo
+  // iframes) could otherwise silently obtain notifications/geolocation/media.
+  // Nothing in the app needs a permission beyond fullscreen (video players).
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+    cb(permission === 'fullscreen')
+  })
+
   session.defaultSession.webRequest.onHeadersReceived((details, cb) => {
     if (!isAppUrl(details.url)) {
       cb({})
@@ -533,26 +676,27 @@ function applyCsp(): void {
   )
 }
 
-/** File types `verso://` may serve — images, pdf, audio, video. Everything else 404s. */
-const PROTOCOL_ALLOWED_EXTS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg',
-  '.pdf',
-  '.mp4', '.webm', '.mov',
-  '.mp3', '.wav', '.m4a'
-])
-
 /** Serve workspace files to the renderer via verso://asset/<relative-path>. */
 function registerAssetProtocol(): void {
   protocol.handle('verso', async (request) => {
     try {
       const url = new URL(request.url)
+      // Only the `asset` host is a thing; don't serve verso://anything-else/….
+      if (url.hostname !== 'asset') return new Response('Not found', { status: 404 })
       const rel = decodeURIComponent(url.pathname).replace(/^\/+/, '')
-      if (!PROTOCOL_ALLOWED_EXTS.has(path.extname(rel).toLowerCase())) {
+      if (!MEDIA_EXTS.has(path.extname(rel).toLowerCase())) {
         return new Response('Not found', { status: 404 })
       }
-      const abs = resolveAsset(rel)
+      const abs = await resolveAsset(rel)
       if (!abs) return new Response('Not found', { status: 404 })
-      return net.fetch(pathToFileURL(abs).toString())
+      // `await` so a rejection (file deleted between resolve and fetch) lands in
+      // the catch below as a 400 instead of an unhandled protocol error.
+      const res = await net.fetch(pathToFileURL(abs).toString())
+      // The renderer's origin isn't verso://, so cors-mode fetch() consumers
+      // (pdf.js) need an explicit allow header; element loads ignore it.
+      const headers = new Headers(res.headers)
+      headers.set('Access-Control-Allow-Origin', '*')
+      return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
     } catch {
       return new Response('Bad request', { status: 400 })
     }
@@ -576,5 +720,8 @@ app
 
 app.on('window-all-closed', () => {
   closeWatcher()
+  // The parse cache write is debounced; a quit inside that window would throw
+  // away a whole hydration's worth of work and re-parse the vault next launch.
+  void flushParseCacheNow()
   if (process.platform !== 'darwin') app.quit()
 })

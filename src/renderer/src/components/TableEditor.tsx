@@ -42,7 +42,6 @@ export function TableEditor({
   // (entering edit mode otherwise leaves nothing focused).
   useEffect(() => {
     firstCell.current?.focus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const push = (h: string[], r: string[][]): void => {

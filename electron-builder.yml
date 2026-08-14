@@ -8,6 +8,11 @@ directories:
 files:
   - out/**/*
   - package.json
+# The demo vault ships alongside the app (copied into userData on first open),
+# so a fresh download can explore linked notes before pointing at a real folder.
+extraResources:
+  - from: sample-vault
+    to: sample-vault
 mac:
   target:
     - target: dmg

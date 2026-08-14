@@ -1,11 +1,22 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore, EDITOR_FONTS, EDITOR_SIZES, ACCENTS } from '../store'
 
 export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
+  // Update check state: null = not checked, false = unreachable, object = result.
+  const [updateInfo, setUpdateInfo] = useState<{ current: string; latest: string; url: string } | null | false>(null)
+  const [checking, setChecking] = useState(false)
+  const runUpdateCheck = async (): Promise<void> => {
+    setChecking(true)
+    try {
+      setUpdateInfo((await window.verso.checkUpdates()) ?? false)
+    } finally {
+      setChecking(false)
+    }
+  }
   const workspace = useStore((s) => s.workspace)
   const openWorkspace = useStore((s) => s.openWorkspace)
   const theme = useStore((s) => s.theme)
-  const toggleTheme = useStore((s) => s.toggleTheme)
+  const setTheme = useStore((s) => s.setTheme)
   const accent = useStore((s) => s.accent)
   const setAccent = useStore((s) => s.setAccent)
   const customCss = useStore((s) => s.customCss)
@@ -15,6 +26,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const setEditorFontSize = useStore((s) => s.setEditorFontSize)
   const smartLinkTitles = useStore((s) => s.smartLinkTitles)
   const setSmartLinkTitles = useStore((s) => s.setSmartLinkTitles)
+  const homeJournal = useStore((s) => s.homeJournal)
+  const setHomeJournal = useStore((s) => s.setHomeJournal)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -24,13 +37,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const setTheme = (t: 'light' | 'dark'): void => {
-    if (theme !== t) toggleTheme()
-  }
-
   return (
     <div className="modal-overlay" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="modal settings-modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modal-head">
           <span>Settings</span>
           <button className="icon-btn" onClick={onClose} title="Close">
@@ -38,6 +47,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
           </button>
         </div>
 
+        <div className="settings-body">
         <div className="settings-section">
           <div className="settings-label">Vault</div>
           <div className="settings-path">{workspace?.root ?? 'No folder open'}</div>
@@ -56,6 +66,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             <button className={'seg-btn' + (theme === 'dark' ? ' active' : '')} onClick={() => setTheme('dark')}>
               ☾ Dark
             </button>
+            <button className={'seg-btn' + (theme === 'paper' ? ' active' : '')} onClick={() => setTheme('paper')}>
+              ❧ Paper
+            </button>
             <button className={'seg-btn' + (theme === 'light' ? ' active' : '')} onClick={() => setTheme('light')}>
               ☀ Light
             </button>
@@ -69,7 +82,7 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
               <button
                 key={a.key}
                 className={'accent-swatch' + (accent === a.key ? ' active' : '')}
-                style={{ background: a.accent }}
+                style={{ background: theme === 'dark' ? a.dark.accent : a.light.accent }}
                 title={a.label}
                 aria-label={`Accent: ${a.label}`}
                 onClick={() => setAccent(a.key)}
@@ -116,6 +129,22 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
         </div>
 
         <div className="settings-section">
+          <div className="settings-label">On launch</div>
+          <div className="seg">
+            <button className={'seg-btn' + (homeJournal ? ' active' : '')} onClick={() => setHomeJournal(true)}>
+              ☼ Today
+            </button>
+            <button className={'seg-btn' + (!homeJournal ? ' active' : '')} onClick={() => setHomeJournal(false)}>
+              Last note
+            </button>
+          </div>
+          <div className="settings-hint">
+            Open on the Journal, with today at the top — capture first, file later. Takes effect
+            the next time a vault is opened. ⌘D goes to today from anywhere.
+          </div>
+        </div>
+
+        <div className="settings-section">
           <div className="settings-label">Smart link titles</div>
           <div className="seg">
             <button
@@ -136,6 +165,33 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             link. This is the only feature that makes a network request by itself — turn it
             off and pasted URLs stay as-is.
           </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-label">Updates</div>
+          <button className="btn" disabled={checking} onClick={() => void runUpdateCheck()}>
+            {checking ? 'Checking…' : 'Check for updates'}
+          </button>
+          {updateInfo && (
+            <div className="settings-hint">
+              {updateInfo.latest === updateInfo.current ? (
+                <>You're on the latest version ({updateInfo.current}).</>
+              ) : (
+                <>
+                  Version {updateInfo.latest} is available (you have {updateInfo.current}) —{' '}
+                  <a href={updateInfo.url} target="_blank" rel="noreferrer">
+                    open the releases page
+                  </a>
+                  .
+                </>
+              )}
+            </div>
+          )}
+          {updateInfo === false && <div className="settings-hint">Couldn't reach GitHub — try again later.</div>}
+          <div className="settings-hint">
+            One request to GitHub, only when you click — Verso never checks automatically.
+          </div>
+        </div>
         </div>
       </div>
     </div>

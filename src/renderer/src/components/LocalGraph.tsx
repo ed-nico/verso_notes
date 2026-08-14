@@ -1,5 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { useSectionOpen } from './RightSection'
 import ForceGraph2D from './LazyForceGraph'
+import { useGraphColors } from './GraphView'
 import { useStore } from '../store'
 import type { GraphNode } from '../lib/vault'
 
@@ -7,7 +9,8 @@ import type { GraphNode } from '../lib/vault'
 export function LocalGraph({ path }: { path: string }): React.JSX.Element | null {
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
-  const [open, setOpen] = useState(false)
+  const colors = useGraphColors()
+  const [open, toggle] = useSectionOpen('localgraph', false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(248)
 
@@ -28,7 +31,7 @@ export function LocalGraph({ path }: { path: string }): React.JSX.Element | null
 
   return (
     <div className="localgraph">
-      <button className="rightbar-section-head" onClick={() => setOpen((v) => !v)}>
+      <button className="rightbar-section-head" onClick={toggle}>
         <span className="rightbar-caret">{open ? '▾' : '▸'}</span>
         Local graph
         <span className="rightbar-section-count">{data.nodes.length - 1}</span>
@@ -42,7 +45,7 @@ export function LocalGraph({ path }: { path: string }): React.JSX.Element | null
             height={200}
             backgroundColor="transparent"
             nodeRelSize={3}
-            linkColor={() => 'rgba(140,140,160,0.35)'}
+            linkColor={() => colors.border}
             linkWidth={1}
             d3VelocityDecay={0.4}
             cooldownTicks={60}
@@ -56,11 +59,11 @@ export function LocalGraph({ path }: { path: string }): React.JSX.Element | null
               const y = node.y ?? 0
               ctx.beginPath()
               ctx.arc(x, y, r, 0, 2 * Math.PI)
-              ctx.fillStyle = node.phantom ? '#6a6a72' : isCenter ? '#7c8cff' : '#9aa6ff'
+              ctx.fillStyle = node.phantom ? colors.textFaint : isCenter ? colors.accent : colors.link
               ctx.fill()
               const label = node.name.length > 18 ? node.name.slice(0, 17) + '…' : node.name
               ctx.font = `${7 / scale + 1.5}px -apple-system, sans-serif`
-              ctx.fillStyle = '#9a9aa6'
+              ctx.fillStyle = colors.textDim
               ctx.textAlign = 'center'
               ctx.fillText(label, x, y + r + 5)
             }}

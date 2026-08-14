@@ -47,6 +47,19 @@ export interface Supertag {
 
 export const normTag = (s: string): string => s.replace(/^#/, '').trim().toLowerCase()
 
+/** True when `path` is a supertag DEFINITION note (i.e. lives under `Tags/`). */
+export const isSupertagDef = (path: string): boolean => path.startsWith(TAGS_DIR + '/')
+
+/**
+ * Frontmatter keys that hold a supertag's SCHEMA rather than user data. On a
+ * definition note these are edited by the schema editor on the tag's page, so
+ * the Properties panel must not also offer them as generic rows — `fields` is a
+ * nested map and would render as `[object Object]`.
+ */
+const SCHEMA_KEYS = new Set(['fields', 'extends'])
+export const isSupertagSchemaKey = (path: string, key: string): boolean =>
+  isSupertagDef(path) && SCHEMA_KEYS.has(key)
+
 function normType(t: string): FieldType {
   const x = t.toLowerCase()
   return (FIELD_TYPES as string[]).includes(x) ? (x as FieldType) : 'text'

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { newBase, type Base, type Filter, type FilterOp } from '../lib/bases'
 import { BaseView, baseRows, cellValue, label } from './BaseView'
+import { VaultLoadingNote } from './VaultLoading'
 
 const BUILTINS = ['name', 'cover', 'tags', 'backlinks']
 const OPS: FilterOp[] = ['contains', 'is', 'is not', '>', '<', '>=', '<=', 'exists', 'empty']
@@ -11,6 +12,7 @@ export function BasesView(): React.JSX.Element {
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
   const openInSidePane = useStore((s) => s.openInSidePane)
+  const previewInSidePane = useStore((s) => s.previewInSidePane)
   const bases = useStore((s) => s.bases)
   const activeId = useStore((s) => s.activeBaseId)
   const setBases = useStore((s) => s.setBases)
@@ -28,6 +30,10 @@ export function BasesView(): React.JSX.Element {
     setEditing(true)
   }
   const remove = (id: string): void => {
+    // Confirm like note/asset deletion does — a base can hold a lot of filter/
+    // column config, and (unlike notes) there is no Trash to recover it from.
+    const name = bases.find((b) => b.id === id)?.name ?? 'this base'
+    if (!window.confirm(`Delete “${name}”? Its filters and columns can't be recovered.`)) return
     setBases(bases.filter((b) => b.id !== id))
     setEditing(false)
   }
@@ -100,6 +106,7 @@ export function BasesView(): React.JSX.Element {
   return (
     <div className="scroll-area">
       <div className="bases">
+        <VaultLoadingNote what="Rows are still arriving." />
         <div className="bases-bar">
           <div className="bases-tabs">
             {bases.map((b) => (
@@ -231,7 +238,13 @@ export function BasesView(): React.JSX.Element {
           </div>
         )}
 
-        {active && <BaseView base={active} openNote={openNote} openInSide={openInSidePane} onPatch={patch} />}
+        {active && <BaseView
+            base={active}
+            openNote={openNote}
+            openInSide={previewInSidePane}
+            addSidePane={openInSidePane}
+            onPatch={patch}
+          />}
 
         {active && active.layout === 'table' && !editing && !hasAgg && (
           <div className="props-hint base-agg-hint">Tip: pick Sum / Average / Min / Max in a column's footer to total it.</div>

@@ -46,3 +46,28 @@ export function codeRanges(text: string): Array<[number, number]> {
 export function inRanges(pos: number, ranges: Array<[number, number]>): boolean {
   return ranges.some(([s, e]) => pos >= s && pos < e)
 }
+
+/**
+ * The ranges of `{{query …}}` / `{{base …}}` blocks.
+ *
+ * These are SEARCH EXPRESSIONS, not content: the `#film` inside
+ * `{{query #film}}` describes what to find, so counting it as one of the note's
+ * own tags makes every query match the note that contains it. Same for a
+ * `[[Page]]` criterion, which would otherwise manufacture a backlink.
+ */
+export function embedRanges(text: string): Array<[number, number]> {
+  const out: Array<[number, number]> = []
+  const re = /\{\{\s*(?:query|base)\b[^}]*\}\}/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) out.push([m.index, m.index + m[0].length])
+  return out
+}
+
+/**
+ * Escape a literal string for embedding in a RegExp. Note names, search queries
+ * and spellcheck words are all user data that routinely contains `.`, `(`, `+`
+ * and friends — every place that builds a regex from them needs this.
+ */
+export function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

@@ -4,7 +4,8 @@ import {
   getFrontmatter,
   parseFrontmatter,
   replaceFrontmatter,
-  serializeFrontmatter
+  serializeFrontmatter,
+  stripFrontmatterFast
 } from './frontmatter'
 
 describe('parseFrontmatter', () => {
@@ -28,9 +29,44 @@ describe('parseFrontmatter', () => {
     expect(fm.data.date).toBe('2026-06-24')
   })
 
-  it('treats malformed YAML as empty data', () => {
+  it('treats malformed YAML as no frontmatter — the whole text stays as body', () => {
     const fm = parseFrontmatter('---\n: : :\n---\nbody')
     expect(fm.data).toEqual({})
+    expect(fm.body).toBe('---\n: : :\n---\nbody')
+  })
+
+  it('does not swallow prose after a leading --- horizontal rule', () => {
+    const src = '---\nScene one prose\n\nmore\n---\nrest'
+    const fm = parseFrontmatter(src)
+    expect(fm.data).toEqual({})
+    expect(fm.body).toBe(src) // nothing lost
+    expect(fm.bodyLine).toBe(0)
+  })
+
+  it('does not treat a fenced list as frontmatter', () => {
+    const src = '---\n- a\n- b\n---\nrest'
+    const fm = parseFrontmatter(src)
+    expect(fm.data).toEqual({})
+    expect(fm.body).toBe(src)
+  })
+
+  it('still accepts an empty block between fences as (empty) frontmatter', () => {
+    const fm = parseFrontmatter('---\n---\nbody')
+    expect(fm.data).toEqual({})
+    expect(fm.body).toBe('body')
+  })
+})
+
+describe('stripFrontmatterFast', () => {
+  it('strips a real frontmatter block', () => {
+    expect(stripFrontmatterFast('---\ntitle: Hi\n---\n\nbody')).toBe('body')
+  })
+  it('strips an unindented list under a key (common YAML style)', () => {
+    expect(stripFrontmatterFast('---\ntags:\n- a\n- b\n---\nbody')).toBe('body')
+  })
+  it('keeps prose after a leading hr intact', () => {
+    const src = '---\nScene one prose\n\nmore\n---\nrest'
+    expect(stripFrontmatterFast(src)).toBe(src)
   })
 })
 

@@ -17,6 +17,11 @@ export interface NoteContent {
   text: string
 }
 
+/** A note read from disk together with its cached parse, if the cache is current. */
+export interface CachedNoteContent extends NoteContent {
+  parsed: unknown | null
+}
+
 /** A wikilink occurrence found inside a note. */
 export interface LinkRef {
   /** The workspace-relative target path the link resolves to (with .md), or null if unresolved. */
@@ -84,7 +89,12 @@ export interface Workspace {
 }
 
 /** Result of a disk write: `ok: true`, or `ok: false` with a human-readable error. */
-export type WriteResult = { ok: true } | { ok: false; error: string }
+export type WriteResult =
+  /** `conflictPath` is set when the write collided with an external change (sync
+   *  tool, another app): the app's version won the note's path and the other
+   *  version was preserved as a sibling conflict file. */
+  | { ok: true; conflictPath?: string }
+  | { ok: false; error: string }
 
 /** Events pushed from main -> renderer when files change on disk. */
 export type FileEvent =
@@ -102,8 +112,17 @@ export interface VersoApi {
   /** Re-open a previously chosen workspace by path (e.g. on startup). */
   loadWorkspace: (root: string) => Promise<Workspace | null>
   readNote: (path: string) => Promise<NoteContent | null>
-  /** Read every note in the workspace at once (used to build the link index). */
-  readAll: () => Promise<NoteContent[]>
+  /** Read a batch of notes by path. The renderer hydrates the vault in chunks so the
+   *  UI is usable before the whole vault has been read (see the store's `hydrateVault`);
+   *  missing/unreadable paths are simply omitted from the result. */
+  readNotes: (paths: string[]) => Promise<NoteContent[]>
+  /** Like `readNotes`, but each note also carries the parse the main process has
+   *  cached for it — or `null` when the file changed since (parse it, then hand the
+   *  result back with `saveParseCache`). Purely an optimisation: treating every
+   *  `parsed` as null behaves exactly like `readNotes`. */
+  readNotesCached: (paths: string[]) => Promise<CachedNoteContent[]>
+  /** Hand freshly parsed notes to the main process to cache for the next launch. */
+  saveParseCache: (entries: { path: string; parsed: unknown }[]) => Promise<void>
   writeNote: (path: string, text: string) => Promise<WriteResult>
   createNote: (path: string, text: string) => Promise<NoteFile | null>
   /** Move/rename a note on disk. Returns the new file, or null on failure (e.g. target exists). */
@@ -150,4 +169,19 @@ export interface VersoApi {
   /** Add a word to the current vault's spellcheck ignore list. */
   addToDictionary: (word: string) => Promise<void>
   onFileEvent: (cb: (event: FileEvent) => void) => () => void
+  /** Print the current window (the open note, via print CSS) to a PDF chosen in
+   *  a save dialog. Resolves to the saved path, or null when cancelled/failed. */
+  exportPdf: (suggestedName: string) => Promise<string | null>
+  /** Manual update check against GitHub releases (single request, click-only). */
+  checkUpdates: () => Promise<{ current: string; latest: string; url: string } | null>
+  /** Copy the bundled demo vault into a writable location and open it. */
+  openDemoVault: () => Promise<Workspace | null>
+  /** Snapshots of a note in `.verso/history/`, newest first. */
+  listSnapshots: (path: string) => Promise<{ stamp: string; size: number }[]>
+  /** A snapshot's full text, or null if missing. */
+  readSnapshot: (path: string, stamp: string) => Promise<string | null>
+  /** Main asks the renderer to flush pending saves before the window closes. */
+  onFlushRequest: (cb: () => void) => () => void
+  /** Renderer signals main that the pre-close flush finished (window may close). */
+  flushDone: () => void
 }

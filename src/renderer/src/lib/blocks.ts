@@ -5,7 +5,9 @@
  * moves it. Serializes to clean Markdown (nested bullets via indentation).
  */
 
-type BlockType = 'paragraph' | 'heading' | 'bullet' | 'task' | 'code' | 'table'
+import { OPTION_COLORS, type OptionColor } from './propColors'
+
+type BlockType = 'paragraph' | 'heading' | 'bullet' | 'task' | 'code' | 'quote' | 'table'
 
 export interface Block {
   id: number
@@ -19,8 +21,12 @@ export interface Block {
   /** Original ordered-list number (e.g. the 3 in `3. item`), re-emitted on save. */
   ordinal?: number
   lang?: string
+  /** Fence marker character for code blocks (` or ~), so `~~~` fences round-trip. */
+  fence?: '`' | '~'
   /** Obsidian-style `^block-anchor` id, kept out of the editable text but re-appended on save. */
   anchor?: string
+  /** Row highlight colour (`%%color:…%%`), kept out of the editable text like `anchor`. */
+  color?: OptionColor
   collapsed: boolean
 }
 
@@ -31,6 +37,18 @@ function nextId(): number {
 
 /** An Obsidian-style `^anchor` marker — hidden from the editable text, preserved on save. */
 const ANCHOR_RE = /\s\^([A-Za-z0-9][A-Za-z0-9-]*)\s*$/
+
+/**
+ * A row's highlight colour, carried on the line itself as `%%color:green%%`.
+ *
+ * Handled exactly like `^anchor`: stripped out of the editable text on parse, put
+ * back on save. It lives in the LINE rather than in a frontmatter map keyed by
+ * block position because position is not an identity — inserting a paragraph above
+ * would silently repaint every colour below it, and an edit made in another app
+ * would drift the whole map. `%%…%%` is Obsidian's comment syntax, so the marker
+ * stays invisible there too instead of leaking into the prose.
+ */
+const COLOR_RE = /\s*%%color:([a-z]+)%%\s*$/
 
 export function makeBlock(partial: Partial<Block> = {}): Block {
   return { id: nextId(), type: 'paragraph', text: '', level: 0, collapsed: false, ...partial }
@@ -46,6 +64,8 @@ const HEADING_RE = /^(#{1,6})\s+(.*)$/
 const FENCE_RE = /^(```|~~~)(.*)$/
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/
 const TASK_RE = /^\[([ xX])\]\s+(.*)$/
+/** A blockquote line: `> text`, or a bare `>` for a blank line inside the quote. */
+const QUOTE_RE = /^\s{0,3}>(?: ?(.*))?$/
 
 interface ParsedDoc {
   blocks: Block[]
@@ -66,9 +86,21 @@ export function parseBlocks(text: string): ParsedDoc {
   if (lines[0]?.trim() === '---') {
     for (let j = 1; j < lines.length; j++) {
       if (lines[j].trim() === '---') {
-        frontmatter = lines.slice(0, j + 1).join('\n') + '\n'
-        i = j + 1
-        if (lines[i]?.trim() === '') i++
+        // Only a mapping-shaped block is frontmatter (mirrors parseFrontmatter's
+        // rule): every non-blank line indented / comment / list item / `key:`.
+        // Prose after a leading `---` hr must stay in the body, not vanish.
+        let shaped = true
+        for (let k = 1; k < j; k++) {
+          const l = lines[k]
+          if (l.trim() === '' || /^[\s#-]/.test(l) || l.includes(':')) continue
+          shaped = false
+          break
+        }
+        if (shaped) {
+          frontmatter = lines.slice(0, j + 1).join('\n') + '\n'
+          i = j + 1
+          if (lines[i]?.trim() === '') i++
+        }
         break
       }
     }
@@ -108,14 +140,17 @@ export function parseBlocks(text: string): ParsedDoc {
 
     const fence = line.match(FENCE_RE)
     if (fence) {
+      const marker = fence[1][0] as '`' | '~'
       const body: string[] = []
       i++
-      while (i < lines.length && !lines[i].match(FENCE_RE)) {
+      // The closing fence must use the SAME marker character — a ``` fence
+      // containing ~~~ lines (or vice versa) must not close early.
+      while (i < lines.length && lines[i].match(FENCE_RE)?.[1][0] !== marker) {
         body.push(lines[i])
         i++
       }
       i++
-      push(makeBlock({ type: 'code', text: body.join('\n'), lang: fence[2].trim() }))
+      push(makeBlock({ type: 'code', text: body.join('\n'), lang: fence[2].trim(), fence: marker }))
       continue
     }
 
@@ -134,6 +169,25 @@ export function parseBlocks(text: string): ParsedDoc {
         i++
       }
       push(makeBlock({ type: 'table', text: rows.join('\n') }))
+      continue
+    }
+
+    // Blockquote: consecutive `>` lines fold into ONE block whose text is the
+    // quote content with the markers stripped. Callouts (`> [!note] Title`) are
+    // just a quote whose first line matches — see lib/callouts.ts. Keeping the
+    // whole thing in `text` is what makes the round trip free: nothing about a
+    // callout lives on the Block, so nothing can be dropped on save.
+    const quote = line.match(QUOTE_RE)
+    if (quote) {
+      const body: string[] = [quote[1] ?? '']
+      i++
+      while (i < lines.length) {
+        const q = lines[i].match(QUOTE_RE)
+        if (!q) break
+        body.push(q[1] ?? '')
+        i++
+      }
+      push(makeBlock({ type: 'quote', text: body.join('\n') }))
       continue
     }
 
@@ -159,6 +213,7 @@ export function parseBlocks(text: string): ParsedDoc {
       !lines[i].match(HEADING_RE) &&
       !lines[i].match(LIST_RE) &&
       !lines[i].match(FENCE_RE) &&
+      !lines[i].match(QUOTE_RE) &&
       !lines[i].trim().startsWith('|')
     ) {
       para.push(lines[i])
@@ -176,6 +231,13 @@ export function parseBlocks(text: string): ParsedDoc {
       b.anchor = m[1]
       b.text = b.text.replace(ANCHOR_RE, '')
     }
+    // After the anchor: colour is written INSIDE it (`text %%color:x%% ^id`), so
+    // by now the marker is at the end of the line again.
+    const c = b.text.match(COLOR_RE)
+    if (c && (OPTION_COLORS as readonly string[]).includes(c[1])) {
+      b.color = c[1] as OptionColor
+      b.text = b.text.replace(COLOR_RE, '')
+    }
   }
 
   return { blocks, frontmatter }
@@ -185,34 +247,70 @@ export function parseBlocks(text: string): ParsedDoc {
 // Serialization
 // ---------------------------------------------------------------------------
 
-function serializeBlock(b: Block): string {
-  // A preserved `^anchor` goes back at the very end of the block's markdown.
-  const anchor = b.anchor && b.type !== 'code' && b.type !== 'table' ? ` ^${b.anchor}` : ''
+function serializeBlock(b: Block, ordinal?: number): string {
+  // A preserved `^anchor` goes back at the very end of the block's markdown, with
+  // the colour marker just inside it (parse peels them off in that order).
+  const meta = b.type === 'code' || b.type === 'table' ? '' : (b.color ? ` %%color:${b.color}%%` : '')
+  const anchor = (b.anchor && b.type !== 'code' && b.type !== 'table' ? ` ^${b.anchor}` : '')
+  const tail = meta + anchor
   switch (b.type) {
     case 'heading':
-      return `${'#'.repeat(b.level || 1)} ${b.text}${anchor}`
-    case 'code':
-      return `\`\`\`${b.lang ?? ''}\n${b.text}\n\`\`\``
+      return `${'#'.repeat(b.level || 1)} ${b.text}${tail}`
+    case 'code': {
+      const f = (b.fence ?? '`').repeat(3)
+      return `${f}${b.lang ?? ''}\n${b.text}\n${f}`
+    }
     case 'table':
       return b.text
+    case 'quote':
+      // A bare `>` for blank lines, so an empty line inside a quote doesn't end it.
+      return b.text
+        .split('\n')
+        .map((l) => (l === '' ? '>' : `> ${l}`))
+        .join('\n') + tail
     case 'bullet':
     case 'task': {
       const pad = '  '.repeat(b.level)
       const marker =
-        b.type === 'task' ? `- [${b.checked ? 'x' : ' '}] ` : b.ordered ? `${b.ordinal ?? 1}. ` : '- '
+        b.type === 'task' ? `- [${b.checked ? 'x' : ' '}] ` : b.ordered ? `${ordinal ?? b.ordinal ?? 1}. ` : '- '
       const [first, ...rest] = b.text.split('\n')
-      return [`${pad}${marker}${first}`, ...rest.map((l) => `${pad}  ${l}`)].join('\n') + anchor
+      return [`${pad}${marker}${first}`, ...rest.map((l) => `${pad}  ${l}`)].join('\n') + tail
     }
     default:
-      return b.text + anchor
+      return b.text + tail
   }
 }
 
+/**
+ * Sequential numbers for ordered-list items (id → number), counting consecutive
+ * ordered siblings per level — the same numbering the editor DISPLAYS, so what's
+ * written to disk can't diverge from what the user sees after splits/moves.
+ */
+export function orderedNumbers(blocks: Block[]): Map<number, number> {
+  const out = new Map<number, number>()
+  const counters: number[] = []
+  for (const b of blocks) {
+    if (!isList(b)) {
+      counters.length = 0
+      continue
+    }
+    counters.length = b.level + 1
+    if (b.type === 'bullet' && b.ordered) {
+      counters[b.level] = (counters[b.level] ?? 0) + 1
+      out.set(b.id, counters[b.level])
+    } else {
+      counters[b.level] = 0 // an unordered/task sibling restarts numbering
+    }
+  }
+  return out
+}
+
 export function serializeBlocks(blocks: Block[], frontmatter = ''): string {
+  const nums = orderedNumbers(blocks)
   let body = ''
   for (let i = 0; i < blocks.length; i++) {
     if (i > 0) body += isList(blocks[i - 1]) && isList(blocks[i]) ? '\n' : '\n\n'
-    body += serializeBlock(blocks[i])
+    body += serializeBlock(blocks[i], nums.get(blocks[i].id))
   }
   return frontmatter ? `${frontmatter}${body}\n` : `${body}\n`
 }
@@ -356,6 +454,7 @@ export function detectShortcut(text: string): Shortcut | null {
   if ((m = text.match(/^(#{1,6})\s/))) return { patch: { type: 'heading', level: m[1].length }, strip: m[0].length }
   if ((m = text.match(/^\[([ xX]?)\]\s/)))
     return { patch: { type: 'task', checked: m[1].toLowerCase() === 'x' }, strip: m[0].length }
+  if (text.match(/^>\s/)) return { patch: { type: 'quote' }, strip: 2 }
   if (text.match(/^[-*+]\s/)) return { patch: { type: 'bullet' }, strip: 2 }
   if ((m = text.match(/^\d+[.)]\s/))) return { patch: { type: 'bullet', ordered: true }, strip: m[0].length }
   // ```          → code block; ```ts → code block tagged "ts". Fires on the trailing
@@ -375,3 +474,12 @@ export function parseTable(text: string): { header: string[]; rows: string[][] }
 }
 
 export const TABLE_TEMPLATE = '| Column | Column |\n| --- | --- |\n|  |  |'
+
+/** Starter body for a `/mermaid` block — a diagram that renders as soon as it's inserted. */
+export const MERMAID_TEMPLATE = 'flowchart LR\n  A[Start] --> B[Finish]'
+
+/** `/callout` — a note callout awaiting its title (the `> ` marker is implicit in the type). */
+export const CALLOUT_TEMPLATE = '[!note] '
+
+/** `/math` — empty display math, caret between the delimiters. */
+export const MATH_TEMPLATE = '$$$$'

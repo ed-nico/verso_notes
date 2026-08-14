@@ -88,10 +88,16 @@ export function installVideoListener(): void {
       }
     }
     if (!data || typeof data !== 'object') return
-    const d = data as Record<string, any>
+    // The shapes the two players actually post. Everything is optional and
+    // re-checked below: this is untrusted data off a postMessage channel.
+    const d = data as {
+      event?: unknown
+      info?: { currentTime?: unknown }
+      data?: { seconds?: unknown }
+    }
     // YouTube infoDelivery carries info.currentTime; match it to the player by its window.
     let time: number | undefined
-    if (d.event === 'infoDelivery' && d.info && typeof d.info.currentTime === 'number') {
+    if (d.event === 'infoDelivery' && typeof d.info?.currentTime === 'number') {
       time = d.info.currentTime
     } else if (d.event === 'timeupdate' && typeof d.data?.seconds === 'number') {
       time = d.data.seconds // vimeo

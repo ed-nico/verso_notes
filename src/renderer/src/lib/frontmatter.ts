@@ -55,14 +55,22 @@ export function parseFrontmatter(text: string): Frontmatter {
   const end = fenceEnd(lines)
   if (end === -1) return { data: {}, body: text, bodyLine: 0, raw: '' }
 
+  // Only a block that parses to a YAML mapping (or nothing) is frontmatter.
+  // A note that merely *starts* with an `---` hr followed by prose must keep
+  // its full body — treating it as frontmatter silently swallows the text.
   let data: Record<string, unknown> = {}
   try {
     const loaded = YAML.parse(lines.slice(1, end).join('\n'), PARSE_OPTS)
-    if (loaded && typeof loaded === 'object' && !Array.isArray(loaded)) {
+    if (loaded === null || loaded === undefined) {
+      // empty block between fences — valid, empty frontmatter
+    } else if (typeof loaded === 'object' && !Array.isArray(loaded)) {
       data = deDate(loaded) as Record<string, unknown>
+    } else {
+      return { data: {}, body: text, bodyLine: 0, raw: '' }
     }
   } catch {
-    /* malformed YAML -> treat as empty */
+    // malformed YAML — not frontmatter; keep the whole text as body
+    return { data: {}, body: text, bodyLine: 0, raw: '' }
   }
 
   let bodyLine = end + 1
@@ -146,6 +154,14 @@ export function stripFrontmatterFast(text: string): string {
   const lines = text.split('\n')
   const end = fenceEnd(lines)
   if (end === -1) return text
+  // Cheap mapping-shape check (mirrors parseFrontmatter's YAML-mapping rule):
+  // every non-blank top-level line must be indented, a comment, a list item, or
+  // contain a `:`. Prose after a leading `---` hr is NOT frontmatter.
+  for (let i = 1; i < end; i++) {
+    const l = lines[i]
+    if (l.trim() === '' || /^[\s#-]/.test(l) || l.includes(':')) continue
+    return text
+  }
   let bodyLine = end + 1
   if (lines[bodyLine]?.trim() === '') bodyLine++
   return lines.slice(bodyLine).join('\n')

@@ -6,11 +6,15 @@ import { basename, dirname, pathForNewNote, resolveTarget, rewriteLinks } from '
 import { resetSpell } from './lib/spell'
 import { getFrontmatter, parseFrontmatter, replaceFrontmatter } from './lib/frontmatter'
 import { applyTemplate } from './lib/templates'
-import { dailyPath } from './lib/dates'
+import { dailyPath, isValidISO, todayISO } from './lib/dates'
 import { pdfBus } from './lib/pdfbus'
 import { normalizeBases, legacyLocalBases, clearLegacyLocalBases, type Base } from './lib/bases'
 import { dropFromScanCache, clearScanCache } from './lib/query'
+import { clearTodoCache } from './lib/todos'
+import { clearSearchCache, dropFromSearchCache } from './lib/search'
+import { clearSimilarCache } from './lib/similar'
 import { normalizeDoc } from './lib/canvas'
+import { escapeRegExp } from './lib/md'
 import {
   buildSupertagIndex,
   fieldsToFrontmatter,
@@ -42,7 +46,8 @@ export type ViewMode =
   | 'assets'
   | 'tags'
   | 'canvas'
-export type ModalKind = 'settings' | 'help' | null
+  | 'tend'
+export type ModalKind = 'settings' | 'help' | 'compile' | 'task' | null
 
 /** One back/forward history step. A note opens the editor; a view step restores a
  *  non-editor screen (Bases/Graph/Tags/Canvas/…) so Back returns where you actually came from. */
@@ -51,6 +56,9 @@ export type HistEntry =
   | { kind: 'view'; view: ViewMode; baseId?: string | null; tag?: string | null; canvasPath?: string | null }
 
 /** Selectable editor fonts (the note-writing area). */
+/** Selectable UI themes: cool dark (default), warm light ("paper"), and cool light. */
+export type ThemeName = 'dark' | 'paper' | 'light'
+
 export const EDITOR_FONTS: { key: string; label: string; stack: string }[] = [
   { key: 'sans', label: 'Sans', stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif" },
   { key: 'serif', label: 'Serif', stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif" },
@@ -58,14 +66,54 @@ export const EDITOR_FONTS: { key: string; label: string; stack: string }[] = [
 ]
 export const EDITOR_SIZES = [10, 12, 14, 15, 16, 18, 20]
 
-/** Selectable accent themes: CSS variable overrides applied on the root element. */
-export const ACCENTS: { key: string; label: string; accent: string; accentDim: string; link: string }[] = [
-  { key: 'indigo', label: 'Indigo', accent: '#7c8cff', accentDim: '#4a4f7a', link: '#8fa1ff' },
-  { key: 'teal', label: 'Teal', accent: '#2dd4bf', accentDim: '#1d5c54', link: '#5eead4' },
-  { key: 'green', label: 'Green', accent: '#4ade80', accentDim: '#276443', link: '#86efac' },
-  { key: 'amber', label: 'Amber', accent: '#f5a524', accentDim: '#6e4f1a', link: '#fbc75a' },
-  { key: 'rose', label: 'Rose', accent: '#fb7185', accentDim: '#6e3540', link: '#fda4af' },
-  { key: 'mono', label: 'Mono', accent: '#a1a1aa', accentDim: '#4b4b52', link: '#c8c8d0' }
+/** One theme's worth of accent variables (`--accent` / `--accent-dim` / `--link`).
+ *  `accentDim` doubles as the selection background (white text sits on it). */
+export interface AccentVars {
+  accent: string
+  accentDim: string
+  link: string
+}
+
+/** Selectable accent themes: CSS variable overrides applied on the root element.
+ *  Each carries a dark and a light variant — a hue tuned for a dark canvas washes
+ *  out on white, so App.tsx applies the one matching the active theme. */
+export const ACCENTS: { key: string; label: string; dark: AccentVars; light: AccentVars }[] = [
+  {
+    key: 'indigo',
+    label: 'Indigo',
+    dark: { accent: '#7c8cff', accentDim: '#4a4f7a', link: '#8fa1ff' },
+    light: { accent: '#4f5bd5', accentDim: '#5f6ad8', link: '#3d51cc' }
+  },
+  {
+    key: 'teal',
+    label: 'Teal',
+    dark: { accent: '#2dd4bf', accentDim: '#1d5c54', link: '#5eead4' },
+    light: { accent: '#0d9488', accentDim: '#12a496', link: '#0f766e' }
+  },
+  {
+    key: 'green',
+    label: 'Green',
+    dark: { accent: '#4ade80', accentDim: '#276443', link: '#86efac' },
+    light: { accent: '#16a34a', accentDim: '#1fad55', link: '#15803d' }
+  },
+  {
+    key: 'amber',
+    label: 'Amber',
+    dark: { accent: '#f5a524', accentDim: '#6e4f1a', link: '#fbc75a' },
+    light: { accent: '#d97706', accentDim: '#dd8514', link: '#b45309' }
+  },
+  {
+    key: 'rose',
+    label: 'Rose',
+    dark: { accent: '#fb7185', accentDim: '#6e3540', link: '#fda4af' },
+    light: { accent: '#e11d48', accentDim: '#e4325a', link: '#be123c' }
+  },
+  {
+    key: 'mono',
+    label: 'Mono',
+    dark: { accent: '#a1a1aa', accentDim: '#4b4b52', link: '#c8c8d0' },
+    light: { accent: '#52525b', accentDim: '#67676f', link: '#3f3f46' }
+  }
 ]
 
 /** A side pane holds a cmd-clicked note or a PDF; any number can be open (splits). */
@@ -80,7 +128,24 @@ interface VersoState {
   recentVaults: string[]
   files: NoteFile[]
   texts: Record<string, string>
+  /** Bumped on every text change. `texts` is mutated IN PLACE on the typing hot
+   *  path (same map identity, so per-keystroke cloning never happens) — subscribe
+   *  to this tick, not the map, to react to text changes. */
+  textsTick: number
+  /** True while the vault is still hydrating in the background. The app is fully
+   *  usable during this: the file tree, navigation and the open note are all live —
+   *  only vault-WIDE derivations (backlinks, search, graph, queries) are incomplete. */
+  vaultLoading: boolean
+  /** Notes hydrated so far / total, for the sidebar progress line. */
+  loadedCount: number
+  totalCount: number
   parsed: Record<string, ParsedNote>
+  /** What changed in `parsed` on the last update: the paths whose entries were
+   *  re-derived (adds, edits and deletes alike), or null when the whole map was
+   *  replaced (vault load/reload/rename). Consumers that only care about edits to
+   *  OTHER notes can check this list instead of diffing the map — the editor's
+   *  row-memo signal used to walk every parsed note twice per debounced rebuild. */
+  parsedChanges: { rev: number; paths: readonly string[] | null }
   index: VaultIndex
   /** Global navigation history for back/forward (main pane) — notes and view screens. */
   history: HistEntry[]
@@ -92,7 +157,7 @@ interface VersoState {
   view: ViewMode
   /** A pending request to open the in-note find on `path` for `query` (from sidebar search). */
   findRequest: { path: string; query: string } | null
-  theme: 'light' | 'dark'
+  theme: ThemeName
   /** Accent theme key (see ACCENTS). */
   accent: string
   /** Contents of the vault's `.verso/custom.css`, injected into the page (or null). */
@@ -103,6 +168,8 @@ interface VersoState {
   /** Fetch a pasted URL's page title ("smart titles"). The one feature that makes a
    *  network request on its own — off means the app only loads what notes embed. */
   smartLinkTitles: boolean
+  /** Open on the Journal (today) rather than the last note. The app's front door. */
+  homeJournal: boolean
   dirty: boolean
   loading: boolean
   /** The last failed disk write ("path: reason"), surfaced as a toast; null when clear. */
@@ -125,17 +192,30 @@ interface VersoState {
   sidebarOpen: boolean
   /** Whether the right sidebar (calendar/properties/TOC/graph) is shown. */
   rightbarOpen: boolean
+  /** Left sidebar width in px (drag its edge; persisted). */
+  sidebarWidth: number
+  /** Right panel width in px (drag its edge; persisted). */
+  rightbarWidth: number
+  /** Zen mode: chrome hidden, just the document. Session-only, never persisted. */
+  zen: boolean
 
   toggleTheme: () => void
+  setTheme: (t: ThemeName) => void
   setAccent: (key: string) => void
   /** Re-read `.verso/custom.css` from the vault (called on load and on file change). */
   reloadCustomCss: () => Promise<void>
   dismissSaveError: () => void
   toggleSidebar: () => void
   toggleRightbar: () => void
+  setSidebarWidth: (px: number) => void
+  setRightbarWidth: (px: number) => void
+  toggleZen: () => void
+  /** Append `- [ ] text` to today's daily note, creating it if today is new. */
+  addTaskToToday: (text: string) => Promise<void>
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
   setSmartLinkTitles: (on: boolean) => void
+  setHomeJournal: (on: boolean) => void
   openModal: (modal: Exclude<ModalKind, null>) => void
   closeModal: () => void
   setPalette: (open: boolean) => void
@@ -149,9 +229,15 @@ interface VersoState {
   ensureEntity: (name: string, tag: string) => Promise<string>
   /** Create a new supertag definition note under `Tags/` and open it
    *  (pass `{ open: false }` to create in the background, e.g. from the `#` picker). */
-  createSupertag: (name: string, opts?: { open?: boolean }) => Promise<void>
+  /** Create (or find) a tag's definition note; returns its path so the caller can
+   *  immediately write a schema to it — that's how a plain tag gains its first field. */
+  createSupertag: (name: string, opts?: { open?: boolean }) => Promise<string | null>
   /** Write a supertag's field schema to its definition note. */
   setSupertagFields: (defPath: string, fields: FieldDef[]) => Promise<void>
+  /** Delete a tag's definition note, i.e. its schema. The tag itself survives on
+   *  every note carrying it — this demotes a typed tag back to a plain one (and,
+   *  for a tag nothing uses, removes it entirely). */
+  removeSupertag: (tag: string) => Promise<void>
   /** Apply `tag` to every note under `folder` (recursively). */
   applySupertagToFolder: (folder: string, tag: string) => Promise<void>
   /** Create a supertag named after `folder`, inferring its fields from the folder's notes,
@@ -181,6 +267,8 @@ interface VersoState {
   renameCanvas: (path: string, name: string) => Promise<void>
   bootstrap: () => Promise<void>
   openWorkspace: () => Promise<void>
+  /** Open the bundled demo vault (copied somewhere writable on first use). */
+  openDemoVault: () => Promise<void>
   /** Switch to an already-known vault by path (flushes pending edits first). */
   switchVault: (root: string) => Promise<void>
   /** Forget a vault from the switcher list (does not delete its files). */
@@ -196,11 +284,16 @@ interface VersoState {
   clearFindRequest: () => void
   /** Open a note in a new right-hand split (cmd/ctrl-click). */
   openInSidePane: (path: string) => void
+  /** Open in a side pane, REUSING the last note pane — for clicking through a
+   *  list of results without stacking a split per click. */
+  previewInSidePane: (path: string) => void
   openView: (view: ViewMode) => void
   /** Open a PDF in a right-hand split; optionally scroll to a highlight. */
   openPdf: (path: string, highlightId?: string) => void
   /** Close the split at `index` (or the last one when omitted). */
   closeSidePane: (index?: number) => void
+  /** Move the note in the split at `index` into the main pane, closing the split. */
+  promoteSidePane: (index: number) => void
   goBack: () => void
   goForward: () => void
 
@@ -213,6 +306,8 @@ interface VersoState {
   editActive: (text: string) => void
   /** Flush all pending debounced saves to disk. */
   saveActive: () => Promise<void>
+  /** True if `path` has an unsaved buffered edit (module state, so a getter). */
+  hasPendingEdit: (path: string) => boolean
   setNoteProperties: (path: string, data: Record<string, unknown>) => Promise<void>
   /** Persist resized column widths for the `index`-th table block (app-managed `_tableWidths`). */
   setTableWidths: (path: string, index: number, widths: number[]) => Promise<void>
@@ -254,23 +349,23 @@ export function templatesFromFiles(files: NoteFile[]): TemplateFile[] {
 
 /** Wrap the first plain-text (not already-linked) occurrence of `name` in `line` with [[ ]]. */
 function wrapMention(line: string, name: string): string {
-  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(`(^|[^\\w[/])(${esc})(?![\\w\\]/])`, 'i')
+  const re = new RegExp(`(^|[^\\w[/])(${escapeRegExp(name)})(?![\\w\\]/])`, 'i')
   return line.replace(re, (_m, pre: string, nm: string) => `${pre}[[${nm}]]`)
 }
 
-async function loadAll(): Promise<{
-  texts: Record<string, string>
-  parsed: Record<string, ParsedNote>
-}> {
-  const contents = await window.verso.readAll()
-  const texts: Record<string, string> = {}
-  const parsed: Record<string, ParsedNote> = {}
-  for (const { path, text } of contents) {
-    texts[path] = text
-    parsed[path] = parseNote(path, text)
-  }
-  return { texts, parsed }
+/** Notes read per round trip while hydrating. Large enough that the IPC overhead is
+ *  amortized, small enough that the renderer paints between batches. */
+const HYDRATE_CHUNK = 400
+
+/** Drag limits for the two side panels. Clamped on read as well as on write, so a
+ *  stale localStorage value (or a window that shrank since) can never leave a panel
+ *  wider than the window with no way to grab its handle back. */
+const PANEL_LIMITS = { sidebar: { min: 180, max: 520 }, rightbar: { min: 200, max: 560 } }
+
+function clampPanel(px: number, which: 'sidebar' | 'rightbar'): number {
+  const { min, max } = PANEL_LIMITS[which]
+  const room = typeof window !== 'undefined' ? Math.max(min, window.innerWidth - 420) : max
+  return Math.round(Math.min(Math.max(px, min), Math.min(max, room)))
 }
 
 /**
@@ -294,6 +389,12 @@ export const useStore = create<VersoState>((set, get) => {
   // too heavy to run on every keystroke, so we debounce it. texts/parsed update
   // immediately; index consumers (backlinks, queries, graph) are eventually consistent.
   let indexTimer: ReturnType<typeof setTimeout> | null = null
+  // Monotonic revision behind `parsedChanges`; `null` paths means "assume all".
+  let parsedRev = 0
+  const changed = (paths: readonly string[] | null): { rev: number; paths: readonly string[] | null } => ({
+    rev: ++parsedRev,
+    paths
+  })
   // Paths whose text changed during typing but whose `parsed` entry hasn't been
   // re-derived yet — the parse is deferred to the debounce so each keystroke is O(1).
   const dirtyPaths = new Set<string>()
@@ -303,7 +404,8 @@ export const useStore = create<VersoState>((set, get) => {
       indexTimer = null
       const texts = get().texts
       let parsed = get().parsed
-      const changed: ParsedNote[] = []
+      const reparsed: ParsedNote[] = []
+      const touched = [...dirtyPaths]
       let removed = false
       if (dirtyPaths.size) {
         parsed = { ...parsed }
@@ -314,7 +416,7 @@ export const useStore = create<VersoState>((set, get) => {
           } else {
             const pn = parseNote(p, texts[p])
             parsed[p] = pn
-            changed.push(pn)
+            reparsed.push(pn)
           }
         }
         dirtyPaths.clear()
@@ -323,8 +425,12 @@ export const useStore = create<VersoState>((set, get) => {
       // in O(edited notes); anything else (new/removed note, alias change) falls
       // back to a full rebuild. `withContentChanges` returns null when it can't patch.
       const incremental =
-        !removed && changed.length ? get().index.withContentChanges(changed, texts) : null
-      set({ parsed, index: incremental ?? buildIndex(parsed, texts) })
+        !removed && reparsed.length ? get().index.withContentChanges(reparsed, texts) : null
+      set({
+        parsed,
+        parsedChanges: changed(touched),
+        index: incremental ?? buildIndex(parsed, texts)
+      })
     }, 200)
   }
   // Typing hot path: mutate just the changed note's text in place (cloning a 50k-key
@@ -333,7 +439,7 @@ export const useStore = create<VersoState>((set, get) => {
   const updateText = (path: string, text: string): void => {
     const texts = get().texts
     texts[path] = text
-    set({ texts })
+    set({ texts, textsTick: get().textsTick + 1 })
     dirtyPaths.add(path)
     scheduleIndexRebuild()
   }
@@ -344,7 +450,8 @@ export const useStore = create<VersoState>((set, get) => {
   const updateNoteState = (path: string, text: string): void => {
     set({
       texts: { ...get().texts, [path]: text },
-      parsed: { ...get().parsed, [path]: parseNote(path, text) }
+      parsed: { ...get().parsed, [path]: parseNote(path, text) },
+      parsedChanges: changed([path])
     })
     dirtyPaths.add(path)
     scheduleIndexRebuild()
@@ -357,6 +464,14 @@ export const useStore = create<VersoState>((set, get) => {
   const queueWrite = (p: string, t: string): Promise<void> => {
     const chained = (writeChains.get(p) ?? Promise.resolve()).then(async () => {
       const res = await window.verso.writeNote(p, t)
+      if (res.ok && res.conflictPath) {
+        // The file changed on disk (sync tool / another app) while this edit was
+        // buffered. Our version kept the note's path; theirs was preserved as a
+        // sibling conflict file — tell the user so nothing is lost silently.
+        set({
+          saveError: `Sync conflict on ${basename(p)}: another version was saved as “${basename(res.conflictPath)}”`
+        })
+      }
       if (!res.ok) {
         set({ saveError: `Couldn't save ${p}: ${res.error}` })
         // Don't drop the edit: put the text back in the buffer (unless a newer edit
@@ -364,7 +479,7 @@ export const useStore = create<VersoState>((set, get) => {
         // instead of silently losing the change on quit.
         if (!pending.has(p)) {
           pending.set(p, t)
-          set({ dirty: true })
+          syncDirty()
           scheduleFlush(5000) // back off — retrying every 600ms would spam a dead disk
         }
       }
@@ -378,6 +493,11 @@ export const useStore = create<VersoState>((set, get) => {
 
   // Debounced per-path saves, so multiple editors (e.g. journal days) can be live at once.
   const pending = new Map<string, string>()
+  /** `dirty` is always derived from `pending` — call after any pending mutation. */
+  const syncDirty = (): void => {
+    const dirty = pending.size > 0
+    if (get().dirty !== dirty) set({ dirty })
+  }
   let flushTimer: ReturnType<typeof setTimeout> | null = null
   const flushAll = async (): Promise<void> => {
     if (flushTimer) {
@@ -386,17 +506,75 @@ export const useStore = create<VersoState>((set, get) => {
     }
     const entries = [...pending.entries()]
     pending.clear()
-    set({ dirty: false })
+    syncDirty()
     await Promise.all(entries.map(([p, t]) => queueWrite(p, t)))
+    // Also drain writes queued OUTSIDE the buffer (properties, task toggles) so a
+    // pre-close flush really means "everything is on disk", not just typed edits.
+    await Promise.all([...writeChains.values()])
   }
   const scheduleFlush = (delay = 600): void => {
     if (flushTimer) clearTimeout(flushTimer)
     flushTimer = setTimeout(() => void flushAll(), delay)
   }
 
+  // Bumped on every vault (re)load. A hydration pass captures its generation and
+  // stops the moment it goes stale, so switching vaults mid-load can't pour the old
+  // vault's notes into the new one's state.
+  let loadGen = 0
+
+  /**
+   * Read the rest of the vault in the background, chunk by chunk.
+   *
+   * `texts` and `parsed` are mutated IN PLACE here (the documented hot-path
+   * convention) rather than spread per chunk — copying a growing map once per batch
+   * is quadratic in the note count, which is exactly the wrong shape for the case
+   * this exists to fix. Consumers are driven by `textsTick`/`loadedCount` during the
+   * pass, then by one real index build at the end.
+   */
+  const hydrateVault = async (gen: number, paths: string[]): Promise<void> => {
+    for (let i = 0; i < paths.length; i += HYDRATE_CHUNK) {
+      if (gen !== loadGen) return // vault switched under us
+      const slice = paths.slice(i, i + HYDRATE_CHUNK)
+      const contents = await window.verso.readNotesCached(slice)
+      if (gen !== loadGen) return
+      const { texts, parsed } = get()
+      // Notes the cache couldn't answer for, to hand back below. Parsing is ~20% of
+      // a cold start and almost none of it changes between launches, so the second
+      // and later launches on an unchanged vault do essentially none of it.
+      const fresh: { path: string; parsed: unknown }[] = []
+      for (const { path, text, parsed: cached } of contents) {
+        // Never clobber a note already in memory: it was either opened on demand
+        // (ensureLoaded) or edited while the rest of the vault streamed in.
+        if (texts[path] !== undefined) continue
+        texts[path] = text
+        if (cached) {
+          parsed[path] = cached as ParsedNote
+        } else {
+          const pn = parseNote(path, text)
+          parsed[path] = pn
+          fresh.push({ path, parsed: pn })
+        }
+      }
+      if (fresh.length) void window.verso.saveParseCache(fresh)
+      set({ texts, textsTick: get().textsTick + 1, loadedCount: Object.keys(texts).length })
+    }
+    if (gen !== loadGen) return
+    // One index build for the whole vault, once. Swapping `parsed` for a fresh object
+    // here is what tells identity-comparing consumers that the vault is complete.
+    const { texts, parsed } = get()
+    set({
+      parsed: { ...parsed },
+      parsedChanges: changed(null),
+      index: buildIndex(parsed, texts),
+      vaultLoading: false,
+      loadedCount: Object.keys(texts).length
+    })
+  }
+
   /** Load an opened workspace's notes + bases into state, resetting navigation. Shared
    *  by bootstrap / openWorkspace / switchVault so a vault swap always lands cleanly. */
   const applyWorkspace = async (ws: Workspace): Promise<void> => {
+    const gen = ++loadGen
     // Drop anything still queued for the previous vault: a buffered write or a
     // debounced index/flush that fired after the swap would land on the new vault.
     pending.clear()
@@ -407,27 +585,89 @@ export const useStore = create<VersoState>((set, get) => {
     flushTimer = null
     resetSpell() // the new vault has its own spellcheck ignore list
     clearScanCache() // query scan cache entries belong to the previous vault
-    const { texts, parsed } = await loadAll()
-    const first = ws.files[0]?.path
+    clearTodoCache() // …and so do the cached per-note todo lists
+    clearSearchCache() // …the cached searchable bodies
+    clearSimilarCache() // …and the TF-IDF term vectors
+
+    // Home is today's journal unless the user opted out. Landing on ws.files[0]
+    // — whatever sorts first — is arbitrary and gives the app no front door.
+    const home = localStorage.getItem('verso-home') !== 'last'
+    const today = dailyPath(todayISO())
+
+    // Read ONLY the note we're about to show, then paint. The file tree comes from
+    // `ws.files` (already stat'd by the workspace open), so the vault is navigable
+    // immediately; everything else streams in behind this. When the journal is home
+    // that note is TODAY's — otherwise the one note we block the first paint on is
+    // the one note we're not about to render.
+    const first =
+      home && ws.files.some((f) => f.path === today) ? today : ws.files[0]?.path
+    const texts: Record<string, string> = {}
+    const parsed: Record<string, ParsedNote> = {}
+    if (first) {
+      const content = await window.verso.readNote(first)
+      if (content !== null) {
+        texts[first] = content.text
+        parsed[first] = parseNote(first, content.text)
+      }
+    }
+    if (gen !== loadGen) return
     set({
       workspace: ws,
       files: ws.files,
       texts,
       parsed,
+      parsedChanges: changed(null),
       index: buildIndex(parsed, texts),
       loading: false,
+      vaultLoading: ws.files.length > 1,
+      loadedCount: Object.keys(texts).length,
+      totalCount: ws.files.length,
       dirty: false,
-      history: first ? [{ kind: 'note', path: first }] : [],
-      histIndex: first ? 0 : -1,
+      history: home
+        ? [{ kind: 'view', view: 'journal' }]
+        : first
+          ? [{ kind: 'note', path: first }]
+          : [],
+      histIndex: home || first ? 0 : -1,
       sidePanes: [],
       activePath: first ?? null,
-      view: 'editor'
+      view: home ? 'journal' : 'editor'
     })
+
+    // Per-vault side data is small and independent of the note bodies — fetch it
+    // alongside the hydration rather than gating the first paint on it.
+    const rest = ws.files.map((f) => f.path).filter((p) => p !== first)
+    const hydrating = hydrateVault(gen, rest)
+
     const bases = await loadWorkspaceBases()
+    if (gen !== loadGen) return
     set({ bases, activeBaseId: bases[0]?.id ?? null })
     const canvases = await window.verso.listCanvases()
+    if (gen !== loadGen) return
     set({ canvases, activeCanvasPath: canvases[0]?.path ?? null })
     await get().reloadCustomCss()
+    await hydrating
+  }
+
+  /**
+   * Guarantee a note's text is in memory. During hydration a note the user clicks may
+   * not have been read yet — without this the editor would open it blank and then pop
+   * in seconds later.
+   */
+  const ensureLoaded = async (path: string): Promise<void> => {
+    if (get().texts[path] !== undefined) return
+    const content = await window.verso.readNote(path)
+    if (content === null) return
+    const texts = get().texts
+    if (texts[path] !== undefined) return // hydration or an edit beat us to it
+    texts[path] = content.text
+    set({
+      texts,
+      textsTick: get().textsTick + 1,
+      parsed: { ...get().parsed, [path]: parseNote(path, content.text) },
+      parsedChanges: changed([path]),
+      loadedCount: Object.keys(texts).length
+    })
   }
   /** True if `path` has an unsaved buffered edit (used to avoid watcher clobber). */
   const isPending = (path: string): boolean => pending.has(path)
@@ -435,6 +675,7 @@ export const useStore = create<VersoState>((set, get) => {
   /** Show a note in the main pane (no history record). */
   const activateNote = (path: string): void => {
     if (get().dirty) void flushAll()
+    void ensureLoaded(path) // may still be streaming in — don't open it blank
     set({ activePath: path, view: 'editor' })
   }
 
@@ -467,9 +708,10 @@ export const useStore = create<VersoState>((set, get) => {
     (a.kind === 'note'
       ? a.path === (b as { path: string }).path
       : a.view === (b as { view: ViewMode }).view &&
-        a.baseId === (b as { baseId?: string | null }).baseId &&
-        a.tag === (b as { tag?: string | null }).tag &&
-        a.canvasPath === (b as { canvasPath?: string | null }).canvasPath)
+        // normalize: `undefined` (field omitted) and `null` are the same step
+        (a.baseId ?? null) === ((b as { baseId?: string | null }).baseId ?? null) &&
+        (a.tag ?? null) === ((b as { tag?: string | null }).tag ?? null) &&
+        (a.canvasPath ?? null) === ((b as { canvasPath?: string | null }).canvasPath ?? null))
 
   /** Longest back/forward history kept; older steps fall off the front. */
   const HISTORY_MAX = 200
@@ -483,10 +725,37 @@ export const useStore = create<VersoState>((set, get) => {
   }
   const recordHistory = (path: string): void => pushHistory({ kind: 'note', path })
 
+  /** Drop history steps for a deleted note (Back must not resurrect it), deduping
+   *  any now-adjacent identical steps and keeping histIndex on the same entry. */
+  const pruneHistory = (
+    history: HistEntry[],
+    histIndex: number,
+    deadPath: string
+  ): { history: HistEntry[]; histIndex: number } => {
+    const kept: HistEntry[] = []
+    let idx = histIndex
+    for (let i = 0; i < history.length; i++) {
+      const h = history[i]
+      const drop =
+        (h.kind === 'note' && h.path === deadPath) || sameEntry(kept[kept.length - 1], h)
+      if (drop) {
+        if (i <= histIndex) idx--
+      } else {
+        kept.push(h)
+      }
+    }
+    return { history: kept, histIndex: Math.min(Math.max(idx, 0), kept.length - 1) }
+  }
+
+  /** Point history steps for a renamed note at its new path. */
+  const remapHistory = (history: HistEntry[], oldPath: string, newPath: string): HistEntry[] =>
+    history.map((h) => (h.kind === 'note' && h.path === oldPath ? { ...h, path: newPath } : h))
+
   /** Apply a history step to the view state (no new history record). */
   const restoreEntry = (entry: HistEntry): void => {
     if (get().dirty) void flushAll()
     if (entry.kind === 'note') {
+      void ensureLoaded(entry.path) // may still be streaming in — don't open it blank
       set({ activePath: entry.path, view: 'editor' })
     } else {
       set({
@@ -503,7 +772,12 @@ export const useStore = create<VersoState>((set, get) => {
     recentVaults: [],
     files: [],
     texts: {},
+    textsTick: 0,
+    vaultLoading: false,
+    loadedCount: 0,
+    totalCount: 0,
     parsed: {},
+    parsedChanges: { rev: 0, paths: null },
     index: new VaultIndex([], {}),
     history: [],
     histIndex: -1,
@@ -520,20 +794,40 @@ export const useStore = create<VersoState>((set, get) => {
     paletteOpen: false,
     sidebarOpen: localStorage.getItem('verso-sidebar') !== 'closed',
     rightbarOpen: localStorage.getItem('verso-rightbar') !== 'closed',
-    theme: (localStorage.getItem('verso-theme') as 'light' | 'dark' | null) ?? 'dark',
+    sidebarWidth: clampPanel(Number(localStorage.getItem('verso-sidebar-w')) || 260, 'sidebar'),
+    rightbarWidth: clampPanel(Number(localStorage.getItem('verso-rightbar-w')) || 280, 'rightbar'),
+    // Zen is deliberately NOT persisted: it's a posture for the next hour, not a
+    // setting — booting into a chromeless window would just look broken.
+    zen: false,
+    theme: (localStorage.getItem('verso-theme') as ThemeName | null) ?? 'dark',
     accent: localStorage.getItem('verso-accent') ?? 'indigo',
     customCss: null,
-    editorFont: localStorage.getItem('verso-font') ?? 'sans',
+    // Same Paper-implies-Serif default as setTheme, applied on boot.
+    editorFont:
+      localStorage.getItem('verso-font') ??
+      (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
+    homeJournal: localStorage.getItem('verso-home') !== 'last',
     dirty: false,
     loading: false,
     saveError: null,
 
     toggleTheme: () => {
-      const theme = get().theme === 'dark' ? 'light' : 'dark'
+      // Cycle dark → paper → light → dark (palette command; Settings picks directly).
+      const cur = get().theme
+      get().setTheme(cur === 'dark' ? 'paper' : cur === 'paper' ? 'light' : 'dark')
+    },
+
+    setTheme: (theme) => {
       localStorage.setItem('verso-theme', theme)
-      set({ theme })
+      // Paper implies Serif — but only as a DEFAULT. An explicit pick is recorded
+      // in localStorage (`setEditorFont` writes it), so its absence is what marks
+      // the font as still-default and therefore ours to suggest. Switching away
+      // hands the default back, so the pairing is never sticky.
+      const chosen = localStorage.getItem('verso-font')
+      const editorFont = chosen ?? (theme === 'paper' ? 'serif' : 'sans')
+      set({ theme, editorFont })
     },
 
     setAccent: (accent) => {
@@ -559,6 +853,20 @@ export const useStore = create<VersoState>((set, get) => {
       set({ rightbarOpen })
     },
 
+    setSidebarWidth: (px) => {
+      const sidebarWidth = clampPanel(px, 'sidebar')
+      localStorage.setItem('verso-sidebar-w', String(sidebarWidth))
+      set({ sidebarWidth })
+    },
+
+    setRightbarWidth: (px) => {
+      const rightbarWidth = clampPanel(px, 'rightbar')
+      localStorage.setItem('verso-rightbar-w', String(rightbarWidth))
+      set({ rightbarWidth })
+    },
+
+    toggleZen: () => set({ zen: !get().zen }),
+
     setEditorFont: (editorFont) => {
       localStorage.setItem('verso-font', editorFont)
       set({ editorFont })
@@ -567,6 +875,11 @@ export const useStore = create<VersoState>((set, get) => {
     setEditorFontSize: (editorFontSize) => {
       localStorage.setItem('verso-fontsize', String(editorFontSize))
       set({ editorFontSize })
+    },
+
+    setHomeJournal: (homeJournal) => {
+      localStorage.setItem('verso-home', homeJournal ? 'journal' : 'last')
+      set({ homeJournal })
     },
 
     setSmartLinkTitles: (smartLinkTitles) => {
@@ -633,17 +946,29 @@ export const useStore = create<VersoState>((set, get) => {
     createSupertag: async (name, opts) => {
       const open = opts?.open !== false
       const clean = name.replace(/^#/, '').trim().replace(/[/\\]/g, '-')
-      if (!clean) return
+      if (!clean) return null
       const path = `${TAGS_DIR}/${clean}.md`
-      if (get().files.some((f) => f.path.toLowerCase() === path.toLowerCase())) {
-        if (open) get().openNote(path)
-        return
+      const existing = get().files.find((f) => f.path.toLowerCase() === path.toLowerCase())
+      if (existing) {
+        if (open) get().openNote(existing.path)
+        return existing.path
       }
       const created = await window.verso.createNote(path, '---\nfields: {}\n---\n')
-      if (created) {
-        await get().applyFileEvent({ type: 'add', file: created })
-        if (open) get().openNote(created.path)
-      }
+      if (!created) return null
+      await get().applyFileEvent({ type: 'add', file: created })
+      if (open) get().openNote(created.path)
+      return created.path
+    },
+
+    removeSupertag: async (tag) => {
+      const norm = normTag(tag)
+      const st = buildSupertagIndex(supertagsFromParsed(get().parsed)).get(norm)
+      if (!st) return
+      await get().deleteNote(st.path)
+      // Drop the selection if it pointed at a tag that no longer exists anywhere;
+      // a tag nothing carries has no page left to show.
+      const stillUsed = Object.values(get().parsed).some((n) => n.tags.some((t) => normTag(t) === norm))
+      if (!stillUsed && get().activeTag && normTag(get().activeTag as string) === norm) set({ activeTag: null })
     },
 
     setSupertagFields: async (defPath, fields) => {
@@ -711,6 +1036,7 @@ export const useStore = create<VersoState>((set, get) => {
       const text = replaceFrontmatter(combinedBody, mergedFm)
       updateNoteState(notePath, text)
       pending.delete(notePath)
+      syncDirty()
       await queueWrite(notePath, text)
     },
 
@@ -806,16 +1132,33 @@ export const useStore = create<VersoState>((set, get) => {
       const last = await window.verso.getLastWorkspace()
       if (!last) return
       set({ loading: true })
-      const ws = await window.verso.loadWorkspace(last)
-      if (!ws) return set({ loading: false })
-      await applyWorkspace(ws)
+      try {
+        const ws = await window.verso.loadWorkspace(last)
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false }) // never leave the loading screen stuck on a failure
+      }
     },
 
     openWorkspace: async () => {
       set({ loading: true })
-      const ws = await window.verso.openWorkspace()
-      if (!ws) return set({ loading: false })
-      await applyWorkspace(ws)
+      try {
+        const ws = await window.verso.openWorkspace()
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false })
+      }
+      set({ recentVaults: await window.verso.getWorkspaces() })
+    },
+
+    openDemoVault: async () => {
+      set({ loading: true })
+      try {
+        const ws = await window.verso.openDemoVault()
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false })
+      }
       set({ recentVaults: await window.verso.getWorkspaces() })
     },
 
@@ -823,9 +1166,12 @@ export const useStore = create<VersoState>((set, get) => {
       if (get().workspace?.root === root) return
       if (get().dirty) await flushAll() // don't lose unsaved edits on swap
       set({ loading: true })
-      const ws = await window.verso.loadWorkspace(root)
-      if (!ws) return set({ loading: false })
-      await applyWorkspace(ws)
+      try {
+        const ws = await window.verso.loadWorkspace(root)
+        if (ws) await applyWorkspace(ws)
+      } finally {
+        set({ loading: false })
+      }
       set({ recentVaults: await window.verso.getWorkspaces() })
     },
 
@@ -839,18 +1185,40 @@ export const useStore = create<VersoState>((set, get) => {
       if (!ws) return
       const fresh = await window.verso.loadWorkspace(ws.root)
       if (!fresh) return
-      const { texts, parsed } = await loadAll()
+      const gen = ++loadGen
       const exists = (p: string | null | undefined): boolean => !!p && fresh.files.some((f) => f.path === p)
       const active = get().activePath
+      const keep = exists(active) ? active! : (fresh.files[0]?.path ?? null)
+      // Re-read from disk, keeping the user where they are. Same streaming shape as a
+      // fresh open: the note in front of them first, the rest behind it.
+      const texts: Record<string, string> = {}
+      const parsed: Record<string, ParsedNote> = {}
+      if (keep) {
+        const content = await window.verso.readNote(keep)
+        if (content !== null) {
+          texts[keep] = content.text
+          parsed[keep] = parseNote(keep, content.text)
+        }
+      }
+      if (gen !== loadGen) return
+      clearScanCache()
+      clearTodoCache()
+      clearSearchCache()
+      clearSimilarCache()
       set({
         workspace: fresh,
         files: fresh.files,
         texts,
         parsed,
+        parsedChanges: changed(null),
         index: buildIndex(parsed, texts),
-        activePath: exists(active) ? active : (fresh.files[0]?.path ?? null),
+        vaultLoading: fresh.files.length > 1,
+        loadedCount: Object.keys(texts).length,
+        totalCount: fresh.files.length,
+        activePath: keep,
         sidePanes: get().sidePanes.filter((sp) => sp.kind === 'pdf' || exists(sp.path))
       })
+      await hydrateVault(gen, fresh.files.map((f) => f.path).filter((p) => p !== keep))
     },
 
     openNote: (path) => {
@@ -869,7 +1237,23 @@ export const useStore = create<VersoState>((set, get) => {
     openInSidePane: (path) => {
       const panes = get().sidePanes
       if (panes.some((p) => p.kind === 'note' && p.path === path)) return // already open in a split
+      void ensureLoaded(path) // may still be streaming in — don't open it blank
       set({ sidePanes: [...panes, { kind: 'note', path }] })
+    },
+
+    previewInSidePane: (path) => {
+      const panes = get().sidePanes
+      if (panes.some((p) => p.kind === 'note' && p.path === path)) return // already showing
+      void ensureLoaded(path)
+      // REUSE the last note pane rather than appending. Clicking through a list of
+      // results is browsing, not assembling a workspace: stacking a pane per click
+      // is the same "jumping around" this is meant to avoid. ⌘-click still adds a
+      // pane when you do want to line several up. PDF panes are never displaced.
+      const last = panes.map((p) => p.kind).lastIndexOf('note')
+      if (last === -1) return set({ sidePanes: [...panes, { kind: 'note', path }] })
+      const next = [...panes]
+      next[last] = { kind: 'note', path }
+      set({ sidePanes: next })
     },
 
     goBack: () => {
@@ -908,10 +1292,20 @@ export const useStore = create<VersoState>((set, get) => {
       set({ sidePanes: panes.filter((_, i) => i !== at) })
     },
 
+    promoteSidePane: (index) => {
+      const panes = get().sidePanes
+      const pane = panes[index]
+      if (!pane || pane.kind !== 'note') return // a PDF has no main-pane renderer
+      set({ sidePanes: panes.filter((_, i) => i !== index) })
+      // Through openNote, so whatever the main pane was showing (a base, a query,
+      // the journal) is one Back away — promoting is a step forward, not a swap.
+      get().openNote(pane.path)
+    },
+
     editNote: (path, text) => {
       updateText(path, text)
       pending.set(path, text)
-      set({ dirty: true })
+      syncDirty()
       scheduleFlush()
     },
 
@@ -927,11 +1321,14 @@ export const useStore = create<VersoState>((set, get) => {
 
     saveActive: () => flushAll(),
 
+    hasPendingEdit: (path) => pending.has(path),
+
     setNoteProperties: async (path, data) => {
       const cur = get().texts[path] ?? ''
       const text = replaceFrontmatter(cur, data)
       updateNoteState(path, text)
       pending.delete(path)
+      syncDirty()
       await queueWrite(path, text)
     },
 
@@ -996,6 +1393,7 @@ export const useStore = create<VersoState>((set, get) => {
       // survives an immediate app close.
       updateNoteState(path, text)
       pending.delete(path)
+      syncDirty()
       await queueWrite(path, text)
     },
 
@@ -1010,6 +1408,13 @@ export const useStore = create<VersoState>((set, get) => {
         side ? get().openInSidePane(existing) : get().openNote(existing)
         return
       }
+      // An unresolved ISO-date link is a journal day, not a root note: [[2026-07-15]]
+      // creates/opens Daily/2026/07/2026-07-15.md (natural-language `[[` dates land here).
+      if (isValidISO(raw.trim())) {
+        const daily = await get().ensureDailyNote(raw.trim())
+        side ? get().openInSidePane(daily) : get().openNote(daily)
+        return
+      }
       const path = pathForNewNote(raw)
       // Start with an empty body — the title comes from the filename (shown at the top),
       // so the note opens as a blank paragraph ready for typing.
@@ -1017,6 +1422,8 @@ export const useStore = create<VersoState>((set, get) => {
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         side ? get().openInSidePane(created.path) : get().openNote(created.path)
+      } else {
+        set({ saveError: `Couldn't create ${path}` })
       }
     },
 
@@ -1043,6 +1450,24 @@ export const useStore = create<VersoState>((set, get) => {
       return path
     },
 
+    addTaskToToday: async (text) => {
+      const task = text.trim()
+      if (!task) return
+      const path = await get().ensureDailyNote(todayISO())
+      // The day may not have streamed in yet (hydration) — read it rather than
+      // append to an empty string and wipe the entry.
+      if (get().texts[path] === undefined) {
+        const content = await window.verso.readNote(path)
+        if (content !== null && get().texts[path] === undefined) updateNoteState(path, content.text)
+      }
+      const body = parseFrontmatter(get().texts[path] ?? '').body
+      const line = `- [ ] ${task}`
+      get().setNoteBody(path, body.trimEnd() ? `${body.trimEnd()}\n${line}\n` : `${line}\n`)
+      // Straight to disk: quick capture is used mid-thought and then abandoned —
+      // it must survive a quit before the 600ms debounce fires.
+      await get().saveActive()
+    },
+
     applyFileEvent: async (event) => {
       const evPath = event.type === 'unlink' ? event.path : event.type === 'rename' ? event.path : event.file.path
       // Non-markdown vault files route to their own reloaders (the watcher forwards
@@ -1067,6 +1492,7 @@ export const useStore = create<VersoState>((set, get) => {
 
       if (event.type === 'unlink') {
         dropFromScanCache(event.path)
+        dropFromSearchCache(event.path)
         // Merge onto the latest state (a functional update) so concurrent events
         // can't clobber each other.
         set((state) => {
@@ -1079,11 +1505,17 @@ export const useStore = create<VersoState>((set, get) => {
             files,
             texts,
             parsed,
-            index: buildIndex(parsed, texts),
+            parsedChanges: changed([event.path]),
             activePath: state.activePath === event.path ? (files[0]?.path ?? null) : state.activePath,
-            sidePanes: state.sidePanes.filter((sp) => sp.path !== event.path)
+            sidePanes: state.sidePanes.filter((sp) => sp.path !== event.path),
+            // Back must not resurrect the dead note (one keystroke would recreate it).
+            ...pruneHistory(state.history, state.histIndex, event.path)
           }
         })
+        // Index rebuild goes through the debounce: a sync burst deleting N files
+        // then costs one rebuild, not N.
+        dirtyPaths.add(event.path)
+        scheduleIndexRebuild()
         return
       }
 
@@ -1091,16 +1523,26 @@ export const useStore = create<VersoState>((set, get) => {
       // open note / splits follow the file instead of resetting).
       if (event.type === 'rename') {
         dropFromScanCache(event.oldPath)
+        dropFromSearchCache(event.oldPath)
+        // An unsaved buffer follows the file — and wins over what's on disk, so a
+        // keystroke typed right around the move isn't clobbered by this event.
+        if (pending.has(event.oldPath)) {
+          pending.set(event.path, pending.get(event.oldPath)!)
+          pending.delete(event.oldPath)
+        }
+        const keepLocal = isPending(event.path)
         const content = await window.verso.readNote(event.path)
         set((state) => {
           const texts = { ...state.texts }
           const parsed = { ...state.parsed }
+          const local = keepLocal ? (state.texts[event.oldPath] ?? state.texts[event.path]) : undefined
           delete texts[event.oldPath]
           delete parsed[event.oldPath]
           let files = state.files.filter((f) => f.path !== event.oldPath)
           if (content !== null) {
-            texts[event.path] = content.text
-            parsed[event.path] = parseNote(event.path, content.text)
+            const text = local ?? content.text
+            texts[event.path] = text
+            parsed[event.path] = parseNote(event.path, text)
             const meta = event.file ?? { path: event.path, name: basename(event.path), mtime: 0 }
             files = [...files.filter((f) => f.path !== event.path), meta]
           }
@@ -1109,7 +1551,7 @@ export const useStore = create<VersoState>((set, get) => {
             files,
             texts,
             parsed,
-            index: buildIndex(parsed, texts),
+            parsedChanges: changed([event.oldPath, event.path]),
             activePath:
               state.activePath === event.oldPath
                 ? moved
@@ -1118,9 +1560,15 @@ export const useStore = create<VersoState>((set, get) => {
                 : state.activePath,
             sidePanes: moved
               ? state.sidePanes.map((sp) => (sp.path === event.oldPath ? { ...sp, path: event.path } : sp))
-              : state.sidePanes.filter((sp) => sp.path !== event.oldPath)
+              : state.sidePanes.filter((sp) => sp.path !== event.oldPath),
+            ...(moved
+              ? { history: remapHistory(state.history, event.oldPath, event.path) }
+              : pruneHistory(state.history, state.histIndex, event.oldPath))
           }
         })
+        dirtyPaths.add(event.oldPath)
+        dirtyPaths.add(event.path)
+        scheduleIndexRebuild()
         return
       }
 
@@ -1132,7 +1580,10 @@ export const useStore = create<VersoState>((set, get) => {
       // one another, so only the last few would survive.
       const content = await window.verso.readNote(file.path)
       if (content === null) return
+      let deferredRebuild = false
       set((state) => {
+        // Re-check after the await: an edit may have started while we were reading.
+        if (event.type === 'change' && isPending(file.path)) return {}
         const texts = { ...state.texts, [file.path]: content.text }
         const note = parseNote(file.path, content.text)
         const parsed = { ...state.parsed, [file.path]: note }
@@ -1141,11 +1592,17 @@ export const useStore = create<VersoState>((set, get) => {
           ? state.files.map((f) => (f.path === file.path ? file : f))
           : [...state.files, file]
         // A change to an existing note patches the index in O(1 note); a brand-new
-        // file (or an alias shift, which withContentChanges rejects) rebuilds fully.
+        // file (or an alias shift, which withContentChanges rejects) defers to the
+        // debounced rebuild so a sync burst costs one rebuild, not one per file.
         const incremental =
           event.type === 'change' && known ? state.index.withContentChanges([note], texts) : null
-        return { files, texts, parsed, index: incremental ?? buildIndex(parsed, texts) }
+        deferredRebuild = !incremental
+        return { files, texts, parsed, parsedChanges: changed([file.path]), index: incremental ?? state.index }
       })
+      if (deferredRebuild) {
+        dirtyPaths.add(file.path)
+        scheduleIndexRebuild()
+      }
     },
 
     renameNote: async (oldPath, input) => {
@@ -1155,35 +1612,70 @@ export const useStore = create<VersoState>((set, get) => {
       const newPath = trimmed.includes('/') ? `${trimmed}.md` : dir ? `${dir}/${trimmed}.md` : `${trimmed}.md`
       if (newPath === oldPath) return
 
-      const state = get()
-      if (isPending(oldPath)) await flushAll()
+      // Flush ALL buffers, not just the renamed note's: a referrer with a pending
+      // edit would otherwise re-flush its pre-rewrite text ~600ms from now and
+      // silently undo the link rewrite on disk.
+      await flushAll()
       const created = await window.verso.renameNote(oldPath, newPath)
-      if (!created) return
+      if (!created) {
+        set({ saveError: `Couldn't rename "${basename(oldPath)}" — "${basename(newPath)}" already exists?` })
+        return
+      }
       dropFromScanCache(oldPath)
+      dropFromSearchCache(oldPath)
 
       try {
+        // Snapshot AFTER the awaits above so keystrokes typed meanwhile are included.
+        const state = get()
         const oldAllPaths = state.files.map((f) => f.path)
-        // The renamed note's own body may link to itself by its old name — rewrite it too.
+        // Compute every rewrite up front. The renamed note's own body may link to
+        // itself by its old name, so it's rewritten too.
         const own = state.texts[oldPath] ?? ''
-        const ownRewritten = rewriteLinks(own, oldPath, newPath, oldAllPaths)
-        const texts: Record<string, string> = { [newPath]: ownRewritten }
-        if (ownRewritten !== own) await queueWrite(newPath, ownRewritten)
+        const rewrites = new Map<string, string>([[newPath, rewriteLinks(own, oldPath, newPath, oldAllPaths)]])
         for (const [p, t] of Object.entries(state.texts)) {
           if (p === oldPath) continue
           const rewritten = rewriteLinks(t, oldPath, newPath, oldAllPaths)
-          texts[p] = rewritten
-          if (rewritten !== t) await queueWrite(p, rewritten)
+          if (rewritten !== t) rewrites.set(p, rewritten)
         }
-        const parsed: Record<string, ParsedNote> = {}
-        for (const [p, t] of Object.entries(texts)) parsed[p] = parseNote(p, t)
-        const files = state.files.filter((f) => f.path !== oldPath).concat(created)
-        set({
-          texts,
-          parsed,
-          files,
-          index: buildIndex(parsed, texts),
-          activePath: state.activePath === oldPath ? newPath : state.activePath,
-          sidePanes: state.sidePanes.map((sp) => (sp.path === oldPath ? { ...sp, path: newPath } : sp))
+        // An edit buffered during the rename follows the file / gets the rewrite
+        // applied, so its eventual flush can't undo what we're about to write.
+        if (pending.has(oldPath)) {
+          pending.set(newPath, rewriteLinks(pending.get(oldPath)!, oldPath, newPath, oldAllPaths))
+          pending.delete(oldPath)
+        }
+        for (const p of rewrites.keys()) {
+          if (p !== newPath && pending.has(p)) {
+            pending.set(p, rewriteLinks(pending.get(p)!, oldPath, newPath, oldAllPaths))
+          }
+        }
+        // Persist the changed files.
+        if (rewrites.get(newPath) !== own) await queueWrite(newPath, rewrites.get(newPath)!)
+        for (const [p, t] of rewrites) {
+          if (p !== newPath) await queueWrite(p, t)
+        }
+        // Merge onto the freshest state (watcher events / keystrokes may have landed
+        // mid-rename) and reparse only the notes that actually changed.
+        set((s) => {
+          const texts = { ...s.texts }
+          const parsed = { ...s.parsed }
+          delete texts[oldPath]
+          delete parsed[oldPath]
+          for (const [p, t] of rewrites) {
+            texts[p] = t
+            parsed[p] = parseNote(p, t)
+          }
+          const files = s.files.filter((f) => f.path !== oldPath && f.path !== newPath).concat(created)
+          return {
+            texts,
+            parsed,
+            // A rename rewrites links across arbitrarily many referrers.
+            parsedChanges: changed(null),
+            files,
+            index: buildIndex(parsed, texts),
+            activePath: s.activePath === oldPath ? newPath : s.activePath,
+            sidePanes: s.sidePanes.map((sp) => (sp.path === oldPath ? { ...sp, path: newPath } : sp)),
+            history: remapHistory(s.history, oldPath, newPath)
+          }
         })
         // Canvas cards point at notes by path — retarget any that referenced the old path.
         for (const c of get().canvases) {
@@ -1217,7 +1709,10 @@ export const useStore = create<VersoState>((set, get) => {
 
     deleteNote: async (path) => {
       const ok = await window.verso.deleteNote(path)
-      if (!ok) return
+      if (!ok) {
+        set({ saveError: `Couldn't delete ${path}` })
+        return
+      }
       await get().applyFileEvent({ type: 'unlink', path })
     },
 
@@ -1232,6 +1727,8 @@ export const useStore = create<VersoState>((set, get) => {
       if (created) {
         await get().applyFileEvent({ type: 'add', file: created })
         get().openNote(created.path)
+      } else {
+        set({ saveError: `Couldn't duplicate ${path}` })
       }
     },
 

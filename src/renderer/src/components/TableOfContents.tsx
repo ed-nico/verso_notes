@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import { useSectionOpen } from './RightSection'
 import { useStore } from '../store'
 import { parseBlocks } from '../lib/blocks'
 
@@ -13,7 +14,7 @@ function strip(s: string): string {
 /** A click-to-scroll outline of the active note's headings, for the right sidebar. */
 export function TableOfContents({ path }: { path: string }): React.JSX.Element | null {
   const text = useStore((s) => s.texts[path] ?? '')
-  const [open, setOpen] = useState(true)
+  const [open, toggle] = useSectionOpen('outline', true)
 
   const headings = useMemo(() => {
     const hs = parseBlocks(text).blocks.filter((b) => b.type === 'heading')
@@ -41,7 +42,7 @@ export function TableOfContents({ path }: { path: string }): React.JSX.Element |
 
   return (
     <div className="toc">
-      <button className="rightbar-section-head" onClick={() => setOpen((v) => !v)}>
+      <button className="rightbar-section-head" onClick={toggle}>
         <span className="rightbar-caret">{open ? '▾' : '▸'}</span>
         Outline
         <span className="rightbar-section-count">{headings.length}</span>

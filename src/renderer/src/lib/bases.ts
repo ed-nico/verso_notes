@@ -90,6 +90,9 @@ export function passesFilter(value: unknown, f: Filter): boolean {
   if (f.op === 'contains') return s.includes(fv)
   if (f.op === 'is') return s === fv
   if (f.op === 'is not') return s !== fv
+  // An ordered comparison against nothing matches nothing (Number('') is 0, which
+  // would otherwise make `rating > <empty>` match every rated row).
+  if (!fv) return false
   // Ordered comparison: numeric when both parse as numbers, else lexicographic
   // (which sorts ISO dates YYYY-MM-DD correctly, and year-prefixes too).
   const an = Number(value)

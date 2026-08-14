@@ -42,7 +42,7 @@ export function EntityCard({ path, onClose }: { path: string; onClose: () => voi
         </button>
       </div>
       {fields.length === 0 ? (
-        <div className="entity-card-empty">No fields defined. Add some on the supertag&rsquo;s page.</div>
+        <div className="entity-card-empty">No fields defined. Add some on the tag&rsquo;s page.</div>
       ) : (
         fields.map((f) => (
           <div className="entity-field" key={f.name}>

@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useRef, useState } from 'react'
 import { useStore, templatesFromFiles } from '../store'
 import { dirname } from '../lib/links'
 import { searchNotes } from '../lib/search'
+import { isStructuredQuery } from '../lib/query'
 import { supertagsFromParsed } from '../lib/supertags'
 import { ContextMenu, type MenuItem } from './ContextMenu'
 import { VaultSwitcher } from './VaultSwitcher'
+import { ResizeHandle } from './ResizeHandle'
 import { NOTE_DND_MIME } from '../lib/canvas'
 import { REVEAL_LABEL } from '../lib/platform'
 import type { NoteFile } from '@shared/types'
@@ -56,21 +58,38 @@ function countFiles(node: TreeFolder): number {
   return n
 }
 
+// Zustand runs selectors on EVERY store set — including each keystroke — so the
+// O(files) signature build is memoized on the input map identities. Typing never
+// changes either identity (texts mutates in place; parsed swaps only on the
+// debounced rebuild), so the common case is a two-pointer compare.
+let sigMemo: { files: unknown; parsed: unknown; sig: string } | null = null
+function structSigOf(
+  files: { path: string }[],
+  parsed: Record<string, { frontmatter: Record<string, unknown> }>
+): string {
+  if (sigMemo && sigMemo.files === files && sigMemo.parsed === parsed) return sigMemo.sig
+  let sig = ''
+  for (const f of files) {
+    const fm = parsed[f.path]?.frontmatter as { _order?: unknown; pinned?: unknown } | undefined
+    sig += f.path + ':' + String(fm?._order ?? '') + (fm?.pinned ? 'P' : '') + ';'
+  }
+  sigMemo = { files, parsed, sig }
+  return sig
+}
+
 export function Sidebar(): React.JSX.Element {
   const files = useStore((s) => s.files)
   // A signature of just the sidebar-relevant structure (files + order + pins).
   // The sidebar re-renders only when this changes — NOT on every body keystroke,
   // which would otherwise rebuild the whole file tree as you type.
-  const structSig = useStore((s) => {
-    let sig = ''
-    for (const f of s.files) {
-      const fm = s.parsed[f.path]?.frontmatter as { _order?: unknown; pinned?: unknown } | undefined
-      sig += f.path + ':' + String(fm?._order ?? '') + (fm?.pinned ? 'P' : '') + ';'
-    }
-    return sig
-  })
+  const structSig = useStore((s) => structSigOf(s.files, s.parsed))
   const activePath = useStore((s) => s.activePath)
+  const sidebarWidth = useStore((s) => s.sidebarWidth)
+  const setSidebarWidth = useStore((s) => s.setSidebarWidth)
   const view = useStore((s) => s.view)
+  const vaultLoading = useStore((s) => s.vaultLoading)
+  const loadedCount = useStore((s) => s.loadedCount)
+  const totalCount = useStore((s) => s.totalCount)
   const openNote = useStore((s) => s.openNote)
   const openNoteWithFind = useStore((s) => s.openNoteWithFind)
   const openInSidePane = useStore((s) => s.openInSidePane)
@@ -83,6 +102,8 @@ export function Sidebar(): React.JSX.Element {
   const openCanvasView = useStore((s) => s.openCanvasView)
   const openCanvas = useStore((s) => s.openCanvas)
   const createCanvas = useStore((s) => s.createCanvas)
+  const renameCanvas = useStore((s) => s.renameCanvas)
+  const deleteCanvas = useStore((s) => s.deleteCanvas)
   const templates = useMemo(() => templatesFromFiles(files), [files])
   const newFromTemplate = useStore((s) => s.newFromTemplate)
   const openModal = useStore((s) => s.openModal)
@@ -101,10 +122,18 @@ export function Sidebar(): React.JSX.Element {
   const createSupertagFromFolder = useStore((s) => s.createSupertagFromFolder)
 
   const [query, setQuery] = useState('')
+  // Full-text search touches every note; running it synchronously on each
+  // keystroke made the input itself lag on a big vault. Deferring lets the typed
+  // character paint immediately and re-runs the search at lower priority (React
+  // also drops superseded passes, so a fast typist pays for the last one only).
+  const deferredQuery = useDeferredValue(query)
+  const index = useStore((s) => s.index)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [applyMenu, setApplyMenu] = useState<MenuState | null>(null)
   const [folderMenu, setFolderMenu] = useState<MenuState | null>(null)
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null)
+  const [canvasMenu, setCanvasMenu] = useState<MenuState | null>(null)
+  const [renamingCanvas, setRenamingCanvas] = useState<string | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   // Track which folders are expanded; default (empty) = all folders collapsed.
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -121,18 +150,38 @@ export function Sidebar(): React.JSX.Element {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const tree = useMemo(() => buildTree(files, orderOf), [files, structSig])
 
-  const results = useMemo(
-    () =>
-      query.trim()
-        ? searchNotes(query, files, useStore.getState().texts, 60, {
-            fuzzyNames: false,
-            aliasOf: (p) => useStore.getState().parsed[p]?.aliases ?? [],
-            parsed: useStore.getState().parsed
-          })
-        : null,
+  // ONE search box, two engines. Plain words keep the fuzzy-name + full-text
+  // search; the moment the text uses query syntax (`#tag`, `before:`, `prop:`,
+  // `[[link]]`, `-not`, any directive) the same box runs the query language that
+  // `{{query}}` blocks and Bases already use. Nothing to switch, nothing to learn
+  // twice — the operators you can write in a note now work here too.
+  const isQuery = useMemo(() => isStructuredQuery(deferredQuery), [deferredQuery])
+
+  const results = useMemo(() => {
+    const q = deferredQuery.trim()
+    if (!q) return null
+    if (isQuery) {
+      // A sidebar row is a NOTE, so default to note scope — and that's also the
+      // only scope that can match a note whose tags live in frontmatter and whose
+      // body has no blocks at all. An explicit `scope:` in the text still wins.
+      const raw = /(^|\s)scope:/i.test(q) ? q : `${q} scope:notes`
+      const res = index.runQuery(raw)
+      const rows = res.notes ?? []
+      return rows.slice(0, 200).map((n) => ({
+        path: n.path,
+        name: n.name,
+        score: 0,
+        snippet: n.excerpt,
+        inBody: false
+      }))
+    }
+    return searchNotes(deferredQuery, files, useStore.getState().texts, 60, {
+      fuzzyNames: false,
+      aliasOf: (p) => useStore.getState().parsed[p]?.aliases ?? [],
+      parsed: useStore.getState().parsed
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [query, files, structSig]
-  )
+  }, [deferredQuery, files, structSig, isQuery, index])
 
   const pinned = useMemo(() => {
     const parsed = useStore.getState().parsed
@@ -177,7 +226,7 @@ export function Sidebar(): React.JSX.Element {
       label: `▤ Tag all as ${s.name}`,
       onClick: () => void applySupertagToFolder(m.path, s.name)
     })),
-    { label: '✦ Create supertag from folder', onClick: () => void createSupertagFromFolder(m.path) }
+    { label: '✦ Create tag from folder', onClick: () => void createSupertagFromFolder(m.path) }
   ]
 
   const menuItems = (m: MenuState): MenuItem[] => {
@@ -193,6 +242,9 @@ export function Sidebar(): React.JSX.Element {
   }
 
   const FileRow = ({ file, depth }: { file: NoteFile; depth: number }): React.JSX.Element => {
+    // Guards the rename input's Enter/Escape against the blur that follows them —
+    // without it Enter would commit twice (the second attempt fails and toasts).
+    const renameDone = useRef(false)
     if (renaming === file.path) {
       return (
         <input
@@ -200,12 +252,24 @@ export function Sidebar(): React.JSX.Element {
           autoFocus
           defaultValue={file.name}
           style={{ marginLeft: depth * 14 }}
-          onFocus={(e) => e.target.select()}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') commitRename(file.path, e.currentTarget.value)
-            else if (e.key === 'Escape') setRenaming(null)
+          onFocus={(e) => {
+            renameDone.current = false
+            e.target.select()
           }}
-          onBlur={() => setRenaming(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              renameDone.current = true
+              commitRename(file.path, e.currentTarget.value)
+            } else if (e.key === 'Escape') {
+              renameDone.current = true
+              setRenaming(null)
+            }
+          }}
+          // Clicking away COMMITS (matching the canvas rename) — typed input is
+          // work; only an explicit Escape discards it.
+          onBlur={(e) => {
+            if (!renameDone.current) commitRename(file.path, e.currentTarget.value)
+          }}
         />
       )
     }
@@ -333,14 +397,16 @@ export function Sidebar(): React.JSX.Element {
 
   return (
     <div className="sidebar">
+      <ResizeHandle side="left" width={sidebarWidth} onResize={setSidebarWidth} label="Resize sidebar" />
       {/* Draggable strip clears the macOS traffic-lights; the vault switcher opts out of drag. */}
       <div className="sidebar-header">
         <VaultSwitcher />
       </div>
       <div className="search-wrap">
         <input
-          className="search"
-          placeholder="Search notes…"
+          className={'search' + (isQuery ? ' is-query' : '')}
+          placeholder="Search — or #tag, before:, prop:…"
+          title="Plain words search names and text. Query syntax (#tag, [[link]], before:/after:, prop:key=value, -not, sort:, limit:) filters the vault."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -348,6 +414,26 @@ export function Sidebar(): React.JSX.Element {
           ⌘K
         </button>
       </div>
+      {/* Say which engine answered — otherwise a query returning few rows looks
+          like a broken search rather than a filter doing its job. */}
+      {isQuery && results && (
+        <div className="search-mode" role="status">
+          Query · {results.length} {results.length === 1 ? 'note' : 'notes'}
+        </div>
+      )}
+      {/* Vault-wide results (search, backlinks, graph, queries) are incomplete until
+          hydration finishes — say so rather than quietly returning too few hits. */}
+      {vaultLoading && (
+        <div className="vault-progress" role="status" title="Reading the vault in the background">
+          <span className="vault-progress-bar">
+            <span
+              className="vault-progress-fill"
+              style={{ width: `${totalCount ? Math.round((loadedCount / totalCount) * 100) : 0}%` }}
+            />
+          </span>
+          Indexing {loadedCount.toLocaleString()} / {totalCount.toLocaleString()}
+        </div>
+      )}
       <div className="sidebar-actions">
         <button
           className="icon-btn new-note"
@@ -376,9 +462,17 @@ export function Sidebar(): React.JSX.Element {
           <button className={'nav-item' + (view === 'graph' ? ' active' : '')} onClick={() => openView('graph')}>
             ⦿ Graph
           </button>
+          <button className={'nav-item' + (view === 'tend' ? ' active' : '')} onClick={() => openView('tend')}>
+            ❧ Tend
+          </button>
           <button className={'nav-item' + (view === 'tags' ? ' active' : '')} onClick={() => openView('tags')}>
             # Tags
           </button>
+          <button className={'nav-item' + (view === 'assets' ? ' active' : '')} onClick={() => openView('assets')}>
+            ⧉ Assets
+          </button>
+          {/* Bases stays in the grid's bottom-left cell (with Canvas beside it), so the
+              two expandable items sit on the last row, right above their sub-lists. */}
           <button
             className={'nav-item' + (view === 'database' ? ' active' : '')}
             onClick={() => {
@@ -387,9 +481,6 @@ export function Sidebar(): React.JSX.Element {
             }}
           >
             {bases.length > 0 && <span className="nav-caret">{basesOpen ? '▾' : '▸'}</span>}▦ Bases
-          </button>
-          <button className={'nav-item' + (view === 'assets' ? ' active' : '')} onClick={() => openView('assets')}>
-            ⧉ Assets
           </button>
           <button
             className={'nav-item' + (view === 'canvas' ? ' active' : '')}
@@ -412,16 +503,42 @@ export function Sidebar(): React.JSX.Element {
             </button>
           ))}
         {canvasesOpen &&
-          canvases.map((c) => (
-            <button
-              key={c.path}
-              className={'nav-subitem' + (view === 'canvas' && activeCanvasPath === c.path ? ' active' : '')}
-              onClick={() => openCanvas(c.path)}
-              title={c.path}
-            >
-              ▱ {c.name}
-            </button>
-          ))}
+          canvases.map((c) =>
+            renamingCanvas === c.path ? (
+              <input
+                key={c.path}
+                className="file-rename"
+                autoFocus
+                defaultValue={c.name}
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const v = e.currentTarget.value
+                    setRenamingCanvas(null)
+                    if (v.trim()) void renameCanvas(c.path, v)
+                  } else if (e.key === 'Escape') setRenamingCanvas(null)
+                }}
+                onBlur={(e) => {
+                  const v = e.currentTarget.value
+                  setRenamingCanvas(null)
+                  if (v.trim() && v.trim() !== c.name) void renameCanvas(c.path, v)
+                }}
+              />
+            ) : (
+              <button
+                key={c.path}
+                className={'nav-subitem' + (view === 'canvas' && activeCanvasPath === c.path ? ' active' : '')}
+                onClick={() => openCanvas(c.path)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  setCanvasMenu({ path: c.path, name: c.name, x: e.clientX, y: e.clientY })
+                }}
+                title={c.path}
+              >
+                ▱ {c.name}
+              </button>
+            )
+          )}
         {canvasesOpen && (
           <button className="nav-subitem nav-subitem-add" onClick={() => void createCanvas('Canvas')}>
             ＋ New canvas
@@ -485,7 +602,7 @@ export function Sidebar(): React.JSX.Element {
                 key={hit.path}
                 className={'search-hit' + (hit.path === activePath && view === 'editor' ? ' active' : '')}
                 onClick={(e) =>
-                  e.metaKey || e.ctrlKey ? openInSidePane(hit.path) : openNoteWithFind(hit.path, query.trim())
+                  e.metaKey || e.ctrlKey ? openInSidePane(hit.path) : openNoteWithFind(hit.path, deferredQuery.trim())
                 }
                 role="link"
                 tabIndex={0}
@@ -493,7 +610,7 @@ export function Sidebar(): React.JSX.Element {
                   if (e.key === 'Enter') {
                     e.preventDefault()
                     if (e.metaKey || e.ctrlKey) openInSidePane(hit.path)
-                    else openNoteWithFind(hit.path, query.trim())
+                    else openNoteWithFind(hit.path, deferredQuery.trim())
                   }
                 }}
                 title={hit.path}
@@ -523,6 +640,23 @@ export function Sidebar(): React.JSX.Element {
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={() => setMenu(null)} />
+      )}
+      {canvasMenu && (
+        <ContextMenu
+          x={canvasMenu.x}
+          y={canvasMenu.y}
+          items={[
+            { label: 'Rename', onClick: () => setRenamingCanvas(canvasMenu.path) },
+            {
+              label: 'Delete',
+              danger: true,
+              onClick: () => {
+                if (window.confirm(`Move “${canvasMenu.name}” to the Trash?`)) void deleteCanvas(canvasMenu.path)
+              }
+            }
+          ]}
+          onClose={() => setCanvasMenu(null)}
+        />
       )}
       {folderMenu && (
         <ContextMenu
