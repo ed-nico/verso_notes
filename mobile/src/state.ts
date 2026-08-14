@@ -4,6 +4,21 @@ import { makeVaultFS, isNative, normalizeRoot, type VaultFS } from './fs'
 import { dailyPath, todayISO } from '@vlib/dates'
 import { parseNote } from '@vlib/parse'
 import { normalizeBases, type Base } from '@vlib/bases'
+import { VaultIndex } from '@vlib/vault'
+
+/**
+ * The vault index, built on demand and memoised on the identity of the maps it
+ * derives from. Mobile doesn't keep one in state (nothing here needs backlinks
+ * or a graph) — search is the one caller, and rebuilding per keystroke would be
+ * wasteful where rebuilding per scan is nothing.
+ */
+let indexCache: { parsed: unknown; texts: unknown; index: VaultIndex } | null = null
+export function vaultIndex(parsed: Record<string, ParsedNote>, texts: Record<string, string>): VaultIndex {
+  if (indexCache && indexCache.parsed === parsed && indexCache.texts === texts) return indexCache.index
+  const index = new VaultIndex(Object.values(parsed), texts)
+  indexCache = { parsed, texts, index }
+  return index
+}
 
 /** Default vault location on the phone — a folder your sync tool fills. */
 export const DEFAULT_ROOT = '/storage/emulated/0/Verso'
@@ -21,6 +36,12 @@ interface MobileState {
   parsed: Record<string, ParsedNote>
   /** True while the background full-vault scan is running. */
   scanning: boolean
+  /** Notes read so far / total, so every screen built from the whole vault can
+   *  say it isn't complete yet rather than quietly showing too little. */
+  scanned: number
+  scanTotal: number
+  /** mtime each note's text was read at — what makes a rescan incremental. */
+  mtimes: Record<string, number>
   bases: Base[]
   view: View
   activeBaseId: string | null
@@ -43,20 +64,51 @@ interface MobileState {
   captureToJournal: (text: string) => Promise<void>
 }
 
-/** Read every note once so Bases/Todos see the whole vault (background). */
-async function scanAll(fs: VaultFS, files: NoteFile[]): Promise<{ texts: Record<string, string>; parsed: Record<string, ParsedNote> }> {
+/**
+ * Read the vault so Bases/Todos/search see all of it.
+ *
+ * Every read is a bridge call to native, so on a phone the READS are the cost —
+ * not the parsing. `prev` carries what we already hold, keyed by the mtime it was
+ * read at: a file whose mtime is unchanged is neither re-read nor re-parsed. A
+ * refresh after editing one note therefore costs one read, not the whole vault.
+ * (This is the mobile counterpart of the desktop's persistent parse cache; the
+ * desktop caches the PARSE because its reads are cheap, and here it's reversed.)
+ */
+interface Scanned {
+  texts: Record<string, string>
+  parsed: Record<string, ParsedNote>
+  mtimes: Record<string, number>
+}
+
+async function scanAll(
+  fs: VaultFS,
+  files: NoteFile[],
+  prev: Scanned,
+  onProgress?: (done: number, total: number) => void
+): Promise<Scanned> {
   const texts: Record<string, string> = {}
   const parsed: Record<string, ParsedNote> = {}
+  const mtimes: Record<string, number> = {}
+  let done = 0
   for (const f of files) {
-    try {
-      const t = await fs.read(f.path)
-      texts[f.path] = t
-      parsed[f.path] = parseNote(f.path, t)
-    } catch {
-      /* unreadable note — skip it */
+    const fresh = prev.mtimes[f.path] === f.mtime && prev.texts[f.path] !== undefined
+    if (fresh) {
+      texts[f.path] = prev.texts[f.path]
+      parsed[f.path] = prev.parsed[f.path] ?? parseNote(f.path, prev.texts[f.path])
+      mtimes[f.path] = f.mtime
+    } else {
+      try {
+        const t = await fs.read(f.path)
+        texts[f.path] = t
+        parsed[f.path] = parseNote(f.path, t)
+        mtimes[f.path] = f.mtime
+      } catch {
+        /* unreadable note — skip it */
+      }
     }
+    onProgress?.(++done, files.length)
   }
-  return { texts, parsed }
+  return { texts, parsed, mtimes }
 }
 
 async function loadBases(fs: VaultFS): Promise<Base[]> {
@@ -74,6 +126,9 @@ export const useApp = create<MobileState>((set, get) => ({
   texts: {},
   parsed: {},
   scanning: false,
+  scanned: 0,
+  scanTotal: 0,
+  mtimes: {},
   bases: [],
   view: 'notes',
   activeBaseId: null,
@@ -88,11 +143,15 @@ export const useApp = create<MobileState>((set, get) => ({
     try {
       const files = await fs.list()
       localStorage.setItem('verso-mobile-root', root)
-      set({ fs, root, files, error: null, scanning: true })
+      set({ fs, root, files, error: null, scanning: true, scanned: 0, scanTotal: files.length, mtimes: {} })
       // Background: bases + a full text scan (Bases/Todos need frontmatter/tasks).
       void loadBases(fs).then((bases) => set({ bases }))
-      void scanAll(fs, files).then(({ texts, parsed }) =>
-        set((s) => ({ texts: { ...texts, ...s.texts }, parsed, scanning: false }))
+      void scanAll(fs, files, { texts: {}, parsed: {}, mtimes: {} }, (done, total) =>
+        set({ scanned: done, scanTotal: total })
+      ).then(({ texts, parsed, mtimes }) =>
+        // A note opened (or edited) DURING the scan wins: its text is newer than
+        // whatever the scan read for it.
+        set((s) => ({ texts: { ...texts, ...s.texts }, parsed, mtimes, scanning: false }))
       )
     } catch (e) {
       set({ error: `Could not read ${root} — check the path and storage permission. (${String(e)})` })
@@ -104,10 +163,13 @@ export const useApp = create<MobileState>((set, get) => ({
     if (!fs) return
     try {
       const files = await fs.list()
-      set({ files, scanning: true })
+      const prev = { texts: get().texts, parsed: get().parsed, mtimes: get().mtimes }
+      set({ files, scanning: true, scanned: 0, scanTotal: files.length })
       void loadBases(fs).then((bases) => set({ bases }))
-      const { texts, parsed } = await scanAll(fs, files)
-      set({ texts, parsed, scanning: false })
+      const { texts, parsed, mtimes } = await scanAll(fs, files, prev, (done, total) =>
+        set({ scanned: done, scanTotal: total })
+      )
+      set({ texts, parsed, mtimes, scanning: false })
     } catch {
       set({ scanning: false })
     }

@@ -72,7 +72,7 @@ class DeviceFS implements VaultFS {
 /** Browser dev/e2e stand-in: a small interlinked vault in memory. */
 class ShimFS implements VaultFS {
   private notes = new Map<string, string>([
-    ['Welcome.md', '- Welcome to **Verso mobile**\n- Open [[Reading List]] or the [[Projects/Alpha]] project\n- tags work: #mobile #demo\n'],
+    ['Welcome.md', '- Welcome to **Verso mobile**\n- Open [[Reading List]] or the [[Projects/Alpha]] project\n- tags work: #mobile #demo\n\n![[Reading List]]\n'],
     ['Reading List.md', '- [ ] Dune\n- [x] The Dispossessed\n- see [[Projects/Alpha]]\n'],
     ['Projects/Alpha.md', '---\nstatus: active\npriority: 1\n---\n# Alpha\n\n- links back to [[Welcome]]\n- `inline code` and *italics* and [a url](https://example.com)\n- [ ] ship the beta\n'],
     ['Projects/Beta.md', '---\nstatus: done\npriority: 2\n---\n- finished project\n'],

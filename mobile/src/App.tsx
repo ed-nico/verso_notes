@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { App as CapApp } from '@capacitor/app'
 import { parseBlocks, serializeBlocks } from '@vlib/blocks'
 import { resolveTarget, pathForNewNote, dirname } from '@vlib/links'
-import { useApp, isNative, DEFAULT_ROOT } from './state'
+import { useApp, isNative, DEFAULT_ROOT, vaultIndex } from './state'
+import { isStructuredQuery } from '@vlib/query'
+import { searchNotes } from '@vlib/search'
+import { ScanNote } from './screens'
 import { FolderPicker } from './fs'
 import { renderInline } from './inline'
 import { Drawer, BaseScreen, TodosScreen, JournalScreen } from './screens'
-import { BlockView } from './reader'
+import { BlockView, EmbedHost } from './reader'
 
 /** First-run screen: point the app at the synced vault folder. */
 function Setup(): React.JSX.Element {
@@ -60,24 +63,39 @@ function MenuButton(): React.JSX.Element {
 function List(): React.JSX.Element {
   const files = useApp((s) => s.files)
   const texts = useApp((s) => s.texts)
+  const parsed = useApp((s) => s.parsed)
   const openNote = useApp((s) => s.openNote)
   const refresh = useApp((s) => s.refresh)
   const [q, setQ] = useState('')
+
+  // ONE search box, two engines — the same split the desktop makes. Plain words
+  // rank by filename and full text (with a snippet); the moment the text uses
+  // query syntax (#tag, [[link]], before:, prop:, -not, sort:, limit:) it runs
+  // the query language instead. On a phone this matters more than on a desktop:
+  // there's no sidebar tree to fall back on when you can't name what you want.
+  const isQuery = useMemo(() => isStructuredQuery(q), [q])
   const hits = useMemo(() => {
-    const needle = q.trim().toLowerCase()
-    if (!needle) return files
-    // Path match first, then full-text (texts arrive as the background scan fills in).
-    return files.filter(
-      (f) => f.path.toLowerCase().includes(needle) || (texts[f.path] ?? '').toLowerCase().includes(needle)
-    )
-  }, [files, texts, q])
+    const needle = q.trim()
+    if (!needle) return files.map((f) => ({ path: f.path, name: f.name, snippet: '' }))
+    if (isQuery) {
+      const raw = /(^|\s)scope:/i.test(needle) ? needle : `${needle} scope:notes`
+      const rows = vaultIndex(parsed, texts).runQuery(raw).notes ?? []
+      return rows.slice(0, 200).map((n) => ({ path: n.path, name: n.name, snippet: n.excerpt }))
+    }
+    return searchNotes(needle, files, texts, 80, { parsed }).map((h) => ({
+      path: h.path,
+      name: h.name,
+      snippet: h.snippet
+    }))
+  }, [files, texts, parsed, q, isQuery])
+
   return (
     <div className="screen">
       <header>
         <MenuButton />
         <input
-          className="search"
-          placeholder="Search notes…"
+          className={'search' + (isQuery ? ' is-query' : '')}
+          placeholder="Search — or #tag, before:, prop:…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -85,14 +103,25 @@ function List(): React.JSX.Element {
           ⟳
         </button>
       </header>
+      <ScanNote what="More notes are still being read." />
+      {isQuery && q.trim() && (
+        <div className="search-mode">
+          Query · {hits.length} {hits.length === 1 ? 'note' : 'notes'}
+        </div>
+      )}
       <div className="list">
-        {hits.map((f) => (
-          <div key={f.path} className="row" onClick={() => void openNote(f.path)}>
-            <div className="row-name">{f.name}</div>
-            {f.path.includes('/') && <div className="row-dir">{dirname(f.path)}</div>}
+        {hits.map((h) => (
+          <div key={h.path} className="row" onClick={() => void openNote(h.path)}>
+            <div className="row-name">{h.name}</div>
+            {h.snippet && <div className="row-snippet">{h.snippet}</div>}
+            {h.path.includes('/') && <div className="row-dir">{dirname(h.path)}</div>}
           </div>
         ))}
-        {hits.length === 0 && <div className="empty">No notes{q ? ' match' : ' yet'}.</div>}
+        {hits.length === 0 && (
+          <div className="empty">
+            {!q ? 'No notes yet.' : isQuery ? 'No notes match this query. Try removing a term — within a group every term must match.' : 'No notes match.'}
+          </div>
+        )}
       </div>
       <Capture />
     </div>
@@ -184,9 +213,12 @@ function Note({ path }: { path: string }): React.JSX.Element {
         <textarea className="editor" value={draft} onChange={(e) => setDraft(e.target.value)} autoFocus />
       ) : (
         <div className="reader" onClick={(e) => e.target === e.currentTarget && setEditing(true)}>
-          {blocks.map((b) => (
-            <BlockView key={b.id} b={b} onWikilink={onWikilink} onToggleTask={onToggleTask} />
-          ))}
+          {/* The chain starts at THIS note, which is what refuses `![[Self]]`. */}
+          <EmbedHost value={[path]}>
+            {blocks.map((b) => (
+              <BlockView key={b.id} b={b} onWikilink={onWikilink} onToggleTask={onToggleTask} />
+            ))}
+          </EmbedHost>
           {blocks.length === 0 && <div className="empty">Empty note — tap ✎ to write.</div>}
         </div>
       )}

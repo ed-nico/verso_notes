@@ -8,6 +8,26 @@ import { resolveTarget, pathForNewNote } from '@vlib/links'
 import { useApp } from './state'
 import { BlockView } from './reader'
 
+/**
+ * "The vault isn't fully read yet, so this screen is incomplete."
+ *
+ * Bases, Todos and search are all built from the whole vault, which streams in
+ * behind the first paint. Only the empty case used to say so, which meant a
+ * partial list — the more likely and more misleading state — looked finished.
+ */
+export function ScanNote({ what }: { what: string }): React.JSX.Element | null {
+  const scanning = useApp((s) => s.scanning)
+  const scanned = useApp((s) => s.scanned)
+  const total = useApp((s) => s.scanTotal)
+  if (!scanning) return null
+  return (
+    <div className="scan-note" role="status">
+      <span className="scan-dot" />
+      Reading the vault — {scanned.toLocaleString()} of {total.toLocaleString()}. {what}
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Folder tree (drawer) — same shape as the desktop sidebar's file tree.
 // ---------------------------------------------------------------------------
@@ -170,10 +190,10 @@ export function BaseScreen({ base }: { base: Base }): React.JSX.Element {
     return [...by.entries()].map(([label, rows]) => ({ label, rows }))
   }, [rows, base.groupKey])
 
-  if (scanning && rows.length === 0) return <div className="empty">Scanning vault…</div>
   if (!scanning && rows.length === 0) return <div className="empty">No notes match this base.</div>
   return (
     <div className="db-scroll">
+      <ScanNote what="Rows are still arriving." />
       <table className="db-table">
         <thead>
           <tr>
@@ -329,7 +349,7 @@ export function TodosScreen(): React.JSX.Element {
 
   return (
     <div className="list">
-      {scanning && todos.length === 0 && <div className="empty">Scanning vault…</div>}
+      <ScanNote what="Tasks from notes not yet read are missing." />
       {byNote.map(([path, items]) => (
         <div key={path}>
           <div className="group-head" onClick={() => void openNote(path)}>
