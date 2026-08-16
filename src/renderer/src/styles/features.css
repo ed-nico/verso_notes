@@ -564,7 +564,9 @@ input[type='date'].prop-input {
    prose. Same nine tokens as the Select chips (lib/propColors). */
 .bl-row[data-color] {
   --oc: var(--oc-gray);
-  background: color-mix(in srgb, var(--oc) 12%, transparent);
+  /* background-COLOR, not the shorthand: the row's indent guides are background
+     IMAGE layers set inline, and the shorthand would clear them. */
+  background-color: color-mix(in srgb, var(--oc) 12%, transparent);
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--oc) 70%, transparent);
   border-radius: 4px;
 }
@@ -3282,4 +3284,123 @@ body.col-resizing {
 .queryview-edit:hover {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+/* ---------- Compare (Tend duplicates) ---------- */
+.modal.compare-modal {
+  width: 1040px;
+  max-width: 95vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 86vh;
+}
+.compare-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.compare-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  cursor: pointer;
+}
+.compare-toggle input {
+  accent-color: var(--accent);
+}
+/* Two equal columns, shared by the headers and every diff row so the sides line up. */
+.compare-heads,
+.compare-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.compare-heads {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.compare-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.compare-open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compare-open:hover {
+  color: var(--accent);
+}
+.compare-side {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 2px 6px;
+  flex: none;
+}
+.compare-side:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+.compare-body {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-top: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.compare-cell {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 1px 8px;
+  border-radius: var(--radius-sm);
+  min-height: 1.6em;
+}
+/* Semantic, not accent: added / removed / changed are three states, and the
+   accent already means "selected" everywhere else in the app. */
+.compare-row.add .compare-cell.right {
+  background: color-mix(in srgb, var(--oc-green) 18%, transparent);
+}
+.compare-row.del .compare-cell.left {
+  background: color-mix(in srgb, var(--oc-red) 18%, transparent);
+}
+.compare-row.change .compare-cell.left {
+  background: color-mix(in srgb, var(--oc-red) 14%, transparent);
+}
+.compare-row.change .compare-cell.right {
+  background: color-mix(in srgb, var(--oc-green) 14%, transparent);
+}
+.compare-row.same .compare-cell {
+  color: var(--text-dim);
+}
+.compare-gap {
+  color: var(--text-faint);
+  text-align: center;
+  padding: 2px 0;
+  letter-spacing: 0.3em;
+}
+.compare-note {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 12px 0;
 }

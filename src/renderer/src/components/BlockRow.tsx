@@ -1,5 +1,43 @@
 import React, { Fragment } from 'react'
 import { isList, type Block } from '../lib/blocks'
+import type { IndentGuides } from '../store'
+
+/** Pixels of indent per outline level — must match the row's paddingLeft. */
+const INDENT = 24
+
+/** Rainbow cycle, reusing the vault's nine option-colour tokens so guides can't
+ *  drift from the palette (and so they re-theme with everything else). */
+const GUIDE_HUES = ['blue', 'purple', 'pink', 'orange', 'green', 'teal']
+
+/**
+ * Vertical guides down each ancestor level, painted as one background gradient on
+ * the row rather than as DOM nodes: a deep outline is thousands of rows, and a
+ * span per level per row would be the most expensive thing in the editor. Rows sit
+ * flush against each other, so the per-row segments join into continuous lines.
+ */
+function guideStyle(depth: number, mode: IndentGuides): React.CSSProperties | undefined {
+  if (mode === 'off' || depth <= 0) return undefined
+  const images: string[] = []
+  const positions: string[] = []
+  for (let k = 0; k < depth; k++) {
+    // Under the bullet of the level it belongs to, not at the row's edge.
+    positions.push(`${k * INDENT + 10}px 0`)
+    const c =
+      mode === 'rainbow'
+        ? `color-mix(in srgb, var(--oc-${GUIDE_HUES[k % GUIDE_HUES.length]}) 42%, transparent)`
+        : 'var(--border)'
+    images.push(`linear-gradient(to right, ${c} 0 1px, transparent 1px)`)
+  }
+  // Only the IMAGE layers are set inline, never the `background` shorthand — a
+  // row's colour tint and its selected fill are background-COLOURS from CSS, and
+  // the shorthand would wipe them out.
+  return {
+    backgroundImage: images.join(', '),
+    backgroundPosition: positions.join(', '),
+    backgroundSize: images.map(() => '1px 100%').join(', '),
+    backgroundRepeat: 'no-repeat'
+  }
+}
 
 /** One case-insensitive find-&-replace hit within a block. */
 export type FindMatch = { id: number; index: number; start: number; end: number }
@@ -67,6 +105,8 @@ interface BlockRowProps {
   /** Bumped when vault-wide data (parsed/files/index/spellcheck) changes, so cached
    *  rows refresh link resolution, entity chips, and squiggles. */
   dataTick: number
+  /** Indent-guide style; a scalar so the row memo picks a change up by itself. */
+  guides: IndentGuides
   api: React.RefObject<RowApi>
 }
 
@@ -98,7 +138,8 @@ function propsEq(p: BlockRowProps, n: BlockRowProps): boolean {
     p.acList === n.acList &&
     p.acIndex === n.acIndex &&
     matchEq(p.activeMatch, n.activeMatch) &&
-    p.dataTick === n.dataTick
+    p.dataTick === n.dataTick &&
+    p.guides === n.guides
   )
 }
 
@@ -118,6 +159,7 @@ export const BlockRow = React.memo(function BlockRow({
   acList,
   acIndex,
   activeMatch,
+  guides,
   api
 }: BlockRowProps): React.JSX.Element {
   const h = api.current!
@@ -138,7 +180,7 @@ export const BlockRow = React.memo(function BlockRow({
         }
         data-block-id={b.id}
         data-color={b.color}
-        style={{ paddingLeft: depth * 24 }}
+        style={{ paddingLeft: depth * INDENT, ...guideStyle(depth, guides) }}
         onContextMenu={(e) => h.onRowContextMenu(b, e)}
       >
         <span

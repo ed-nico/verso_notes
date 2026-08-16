@@ -51,7 +51,16 @@ const SECTIONS: Section[] = [
       { k: '# Tags', d: 'Every tag with counts. Give a tag fields and it becomes a typed tag with a table of instances.' },
       { k: '▤ Bases', d: 'Saved table/gallery views over your notes’ frontmatter — a spreadsheet layer on top of the same Markdown.' },
       { k: '◉ Graph', d: 'The whole vault as a force-directed map. Useful for spotting clusters and orphans, not for daily work.' },
-      { k: '❧ Tend', d: 'The gardener’s report: suggested connections, orphans, stubs, stale notes, broken links.' }
+      { k: '❧ Tend', d: 'The gardener’s report: suggested connections, near-duplicates (with a side-by-side compare), orphans, stubs, stale notes, broken links.' }
+    ]
+  },
+  {
+    title: 'Properties & the outline',
+    note: 'Frontmatter is a small database; these are the rules that make it behave like one.',
+    rows: [
+      { k: 'Select options', d: 'Give a property a set of coloured choices once, in any note, and every note with that property inherits the dropdown.' },
+      { k: 'Indent guides', d: 'Settings → Indent guides draws a line down each outline level; Rainbow gives each depth its own colour.' },
+      { k: 'Spelling', d: 'Misspellings are underlined as you write — including inside the block you’re editing. Right-click one for corrections or to add it to the dictionary. Note names, aliases and tags count as known words; code, links, URLs and #tags are never checked. Turn it off in Settings.' }
     ]
   },
   {

@@ -127,6 +127,12 @@ Key invariants and patterns:
   open/closed state persists in localStorage. It has to persist — the panels are keyed by
   note path and remount on every navigation, so component state alone forgot the choice
   the moment you opened another note.
+- Spellcheck: `lib/spell.ts` caches per word and batches over IPC to the main-process
+  nspell. `setVaultWords` feeds it every note name, alias and tag on each index rebuild —
+  a personal vault is full of proper nouns no dictionary carries, and the user already
+  declared them words by naming notes after them. `spellable` also drops acronyms and
+  camelCase identifiers. A right-click on a misspelled word always beats the row-colour
+  palette, in both the rendered and editing paths.
 - **`lib/keymap.ts`** is the one table of app shortcuts; Help renders its key sections from
   it and `keymap.test.ts` fails the build if a chord is bound to two different actions in a
   scope. Add a binding there as well as in the handler.
@@ -158,7 +164,9 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   Renders `{{query …}}`/`{{base …}}` blocks as embeds, `---` as `<hr>`, and a trailing
   click-to-write tail. `/template` (and the sidebar right-click "Apply template") merge a
   template's frontmatter + body into the CURRENT note via `applyTemplateToNote`/`insertTemplate`.
-- **`components/BlockRow.tsx`** — one memoized outliner row; a keystroke re-renders only the
+- **`components/BlockRow.tsx`** — one memoized outliner row; indent guides are one
+  background-IMAGE gradient per row (never the `background` shorthand — row colour tints and
+  the selected fill are background-COLOURS from CSS), so a deep outline costs no extra DOM; a keystroke re-renders only the
   edited block. Rows read the latest editor closures through a `RowApi` ref and re-render on
   scalar prop changes plus a `dataTick` that bumps when parsed/files/index/spellcheck change.
   If you add a field to `Block`, the row's shallow compare picks it up automatically.
@@ -166,6 +174,15 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   and paint for offscreen rows while keeping them in the DOM — which drag-reorder, the
   find-scroll, and PDF export all depend on. Never put it on the editing row: the paint
   containment it brings would clip the `[[`/`/` autocomplete popup.
+- **`components/SpellLayer.tsx`** — the spelling underlines behind the block being
+  EDITED. The rendered row gets its squiggles from `renderInline`, but a focused block is
+  a plain `<textarea>` with no spans to mark, which is exactly when you're fixing a typo.
+  The layer mirrors the field's text with identical metrics and paints it fully
+  TRANSPARENT — only `text-decoration` shows (decoration colour is independent of text
+  colour), so drift misplaces a squiggle instead of ghosting the text. That's also the
+  hit-test surface: right-click in a textarea has no element to target, so
+  `spellSpanAt` measures the layer's `.spell-hit` rects to find the word under the
+  pointer. Keep `.spell-layer`'s font/padding/line-height identical to `.ol-input`.
 - **`components/useBlockDrag.ts`** / **`useFindReplace.ts`** — drag-reorder and in-note
   find & replace, extracted from the editor. `useBlockDrag` reads only refs, which is why
   its document listeners subscribe once instead of re-binding per keystroke; keep it that way.
@@ -273,13 +290,21 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   `^anchors` stripped, links optionally flattened. Rendered by `CompileView` (the `compile`
   modal, opened from the page ⋯ menu / palette on the active note).
 - **`tend.ts`** — the Tend ("gardener") report: suggested connections (note names co-mentioned
-  without links, one combined-alternation scan), orphans, stubs, stale notes, broken links.
-  Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`).
+  without links, one combined-alternation scan), orphans, stubs, stale notes, broken links,
+  and near-duplicates. Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`); a duplicate
+  pair opens `CompareView`, a side-by-side line diff that deliberately WRITES NOTHING —
+  deciding what a duplicate means (keep, merge, link) is the user's, and a wrong auto-merge
+  is unrecoverable.
 - **`bases.ts`** — Base type + filtering helpers (no storage; persistence is the vault file
   above). **`components/BaseView.tsx`** is the shared renderer (table/gallery) used by both the
   Bases page (`BasesView`, interactive) and inline `{{base <name> [limit:N] [layout:…]}}`
   embeds (`BaseEmbed`, read-only). Templates are derived live from the `Templates/` folder
   (`templatesFromFiles`) — there is no `listTemplates` IPC.
+- **`diff.ts` + `similar.ts`'s `duplicatePairs`** — Tend's near-duplicate report. All-pairs
+  cosine is O(n²), so each note proposes only notes sharing one of its heaviest tf-idf terms
+  (an inverted index over the top few) and only those pairs are scored. `duplicatePairs` takes
+  the FULL texts map plus a `skip` predicate — never a pre-filtered map, which would miss
+  `corpusOf`'s identity cache and evict the corpus `similarNotes` is using.
 - **`propColors.ts` + `propSchema.ts`** — coloured Select properties. A Select's options live
   in the hidden `_options` frontmatter map and their colours in the parallel `_colors` one;
   the nine colour names are TOKENS, mapped to `--oc-*` variables per theme in

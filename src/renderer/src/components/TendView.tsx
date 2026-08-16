@@ -1,7 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { tendReport, type Suggestion, type BrokenLink } from '../lib/tend'
-import { dirname } from '../lib/links'
+import type { DuplicatePair } from '../lib/similar'
+import { basename, dirname } from '../lib/links'
+import { CompareView } from './CompareView'
 import type { NoteFile } from '@shared/types'
 import { VaultLoadingNote } from './VaultLoading'
 
@@ -113,6 +115,34 @@ function BrokenRow({ b }: { b: BrokenLink }): React.JSX.Element {
   )
 }
 
+function DuplicateRow({
+  d,
+  onCompare
+}: {
+  d: DuplicatePair
+  onCompare: (p: { a: string; b: string }) => void
+}): React.JSX.Element {
+  const openNote = useStore((st) => st.openNote)
+  const nameOf = (p: string): string => basename(p)
+  return (
+    <div className="tend-row">
+      <span className="tend-note" role="link" tabIndex={0} onClick={() => openNote(d.a)}>
+        {nameOf(d.a)}
+      </span>
+      <span className="tend-detail">
+        and{' '}
+        <span className="tend-src" role="link" tabIndex={0} onClick={() => openNote(d.b)}>
+          {nameOf(d.b)}
+        </span>{' '}
+        are {Math.round(d.score * 100)}% alike
+      </span>
+      <button className="bl-link-btn" title="Show what differs" onClick={() => onCompare({ a: d.a, b: d.b })}>
+        ⇔ Compare
+      </button>
+    </div>
+  )
+}
+
 function capped<T>(items: T[], render: (item: T) => React.ReactNode): React.ReactNode {
   return (
     <>
@@ -127,6 +157,7 @@ export function TendView(): React.JSX.Element {
   const files = useStore((s) => s.files)
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
+  const [compare, setCompare] = useState<{ a: string; b: string } | null>(null)
 
   // The scan is vault-wide, so recompute only when the index generation changes
   // (the view is unmounted when not shown — nothing runs while typing elsewhere).
@@ -143,6 +174,7 @@ export function TendView(): React.JSX.Element {
   }, [files, index])
 
   const total =
+    report.duplicates.length +
     report.suggestions.length +
     report.orphans.length +
     report.stubs.length +
@@ -163,6 +195,7 @@ export function TendView(): React.JSX.Element {
 
   return (
     <div className="scroll-area">
+      {compare && <CompareView a={compare.a} b={compare.b} onClose={() => setCompare(null)} />}
       <div className="doc tend">
         <VaultLoadingNote what="Suggestions will change as more notes load." />
         <div className="tend-head">
@@ -191,6 +224,16 @@ export function TendView(): React.JSX.Element {
             <Section label="broken link" count={report.broken.length} hint="wikilinks pointing at nothing" defaultOpen>
               {capped(report.broken, (b) => (
                 <BrokenRow key={b.raw} b={b} />
+              ))}
+            </Section>
+            <Section
+              label="possible duplicate"
+              count={report.duplicates.length}
+              hint="notes that say the same thing"
+              defaultOpen
+            >
+              {capped(report.duplicates, (d) => (
+                <DuplicateRow key={d.a + '\u0000' + d.b} d={d} onCompare={setCompare} />
               ))}
             </Section>
             <Section label="orphan" count={report.orphans.length} hint="no links in or out">

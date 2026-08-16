@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import { useStore, EDITOR_FONTS, EDITOR_SIZES, ACCENTS } from '../store'
+import { useStore, EDITOR_FONTS, EDITOR_SIZES, ACCENTS, type IndentGuides } from '../store'
+
+const GUIDE_MODES: { value: IndentGuides; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'plain', label: 'Lines' },
+  { value: 'rainbow', label: 'Rainbow' }
+]
 
 export function Settings({ onClose }: { onClose: () => void }): React.JSX.Element {
   // Update check state: null = not checked, false = unreachable, object = result.
@@ -24,6 +30,10 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const setEditorFont = useStore((s) => s.setEditorFont)
   const editorFontSize = useStore((s) => s.editorFontSize)
   const setEditorFontSize = useStore((s) => s.setEditorFontSize)
+  const indentGuides = useStore((s) => s.indentGuides)
+  const setIndentGuides = useStore((s) => s.setIndentGuides)
+  const spellcheck = useStore((s) => s.spellcheck)
+  const setSpellcheck = useStore((s) => s.setSpellcheck)
   const smartLinkTitles = useStore((s) => s.smartLinkTitles)
   const setSmartLinkTitles = useStore((s) => s.setSmartLinkTitles)
   const homeJournal = useStore((s) => s.homeJournal)
@@ -126,6 +136,42 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             ))}
           </div>
           <div className="settings-hint">Sets the size and typeface of the writing area. Code stays monospace.</div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-label">Check spelling</div>
+          <div className="seg">
+            <button className={'seg-btn' + (spellcheck ? ' active' : '')} onClick={() => setSpellcheck(true)}>
+              On
+            </button>
+            <button className={'seg-btn' + (!spellcheck ? ' active' : '')} onClick={() => setSpellcheck(false)}>
+              Off
+            </button>
+          </div>
+          <div className="settings-hint">
+            Underlines misspelled words as you write, including in the block you’re editing. Right-click one for
+            corrections, or to add it to the dictionary. Your note names, aliases and tags all count as known
+            words, so your own vocabulary isn’t flagged.
+          </div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-label">Indent guides</div>
+          <div className="seg">
+            {GUIDE_MODES.map((g) => (
+              <button
+                key={g.value}
+                className={'seg-btn' + (indentGuides === g.value ? ' active' : '')}
+                onClick={() => setIndentGuides(g.value)}
+              >
+                {g.label}
+              </button>
+            ))}
+          </div>
+          <div className="settings-hint">
+            Vertical lines down the outline’s indent levels. Rainbow gives each depth its own colour, which
+            makes a deep outline easier to read at a glance.
+          </div>
         </div>
 
         <div className="settings-section">

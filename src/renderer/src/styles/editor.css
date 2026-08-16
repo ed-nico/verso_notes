@@ -431,7 +431,8 @@ mark.tok-mark {
   margin: 2px 0;
 }
 .bl-row.selected {
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  /* See .bl-row[data-color]: colour only, so inline indent guides survive. */
+  background-color: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 .bl-row.selected ::selection {
   background: transparent;
@@ -710,14 +711,6 @@ mark.tok-mark {
   overflow-y: auto;
   padding: 10px 14px 16px;
 }
-.rightbar-title {
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-dim);
-  font-weight: 600;
-  margin-bottom: 12px;
-}
 
 /* ---------- Properties panel ---------- */
 .props-section {
@@ -840,4 +833,46 @@ select.prop-input {
   background: var(--bg-elevated);
   border-radius: 3px;
   padding: 0 4px;
+}
+
+/* ---------- Live spelling underlines (components/SpellLayer) ---------- */
+/*
+ * A mirror of the editing field's text, sitting underneath it with identical
+ * metrics and drawn fully transparent — only the underlines show. The textarea's
+ * own text stays visible on top, so a pixel of drift misplaces a squiggle rather
+ * than ghosting the text (which is why this paints decoration, not glyphs, unlike
+ * the code-block highlight layer above).
+ */
+.spell-edit-wrap {
+  position: relative;
+  width: 100%;
+}
+.spell-edit-wrap .ol-input {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+.spell-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  color: transparent;
+  /* Every one of these must match .ol-input exactly or the underlines drift. */
+  font-family: inherit;
+  font-size: inherit;
+  line-height: 1.6;
+  padding: 3px 0;
+  margin: 0;
+  border: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow: hidden;
+}
+/* `text-decoration-color` is independent of `color`, so the underline paints even
+   though the glyphs it belongs to are invisible. */
+.spell-hit {
+  text-decoration: underline wavy var(--danger);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
 }

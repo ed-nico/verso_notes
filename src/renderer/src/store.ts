@@ -3,7 +3,7 @@ import type { CanvasMeta, FileEvent, NoteFile, ParsedNote, TemplateFile, Workspa
 import { parseNote } from './lib/parse'
 import { VaultIndex } from './lib/vault'
 import { basename, dirname, pathForNewNote, resolveTarget, rewriteLinks } from './lib/links'
-import { resetSpell } from './lib/spell'
+import { resetSpell, setVaultWords } from './lib/spell'
 import { getFrontmatter, parseFrontmatter, replaceFrontmatter } from './lib/frontmatter'
 import { applyTemplate } from './lib/templates'
 import { dailyPath, isValidISO, todayISO } from './lib/dates'
@@ -116,6 +116,9 @@ export const ACCENTS: { key: string; label: string; dark: AccentVars; light: Acc
   }
 ]
 
+/** Indent-guide style for the outliner. */
+export type IndentGuides = 'off' | 'plain' | 'rainbow'
+
 /** A side pane holds a cmd-clicked note or a PDF; any number can be open (splits). */
 export interface SidePane {
   kind: 'note' | 'pdf'
@@ -165,6 +168,12 @@ interface VersoState {
   /** Editor font family key (see EDITOR_FONTS) and base font size in px. */
   editorFont: string
   editorFontSize: number
+  /** Vertical guides down the outliner's indent levels: off, one faint line per
+   *  level, or a colour per depth ("rainbow" — the depth is easier to count when
+   *  the levels differ rather than repeat). */
+  indentGuides: IndentGuides
+  /** Spellcheck on/off. Off means no checking, no underlines, no IPC at all. */
+  spellcheck: boolean
   /** Fetch a pasted URL's page title ("smart titles"). The one feature that makes a
    *  network request on its own — off means the app only loads what notes embed. */
   smartLinkTitles: boolean
@@ -214,6 +223,8 @@ interface VersoState {
   addTaskToToday: (text: string) => Promise<void>
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
+  setIndentGuides: (mode: IndentGuides) => void
+  setSpellcheck: (on: boolean) => void
   setSmartLinkTitles: (on: boolean) => void
   setHomeJournal: (on: boolean) => void
   openModal: (modal: Exclude<ModalKind, null>) => void
@@ -431,6 +442,7 @@ export const useStore = create<VersoState>((set, get) => {
         parsedChanges: changed(touched),
         index: incremental ?? buildIndex(parsed, texts)
       })
+      publishVaultWords(parsed)
     }, 200)
   }
   // Typing hot path: mutate just the changed note's text in place (cloning a 50k-key
@@ -455,6 +467,18 @@ export const useStore = create<VersoState>((set, get) => {
     })
     dirtyPaths.add(path)
     scheduleIndexRebuild()
+  }
+
+  /** Hand the spellchecker the vault's own proper nouns — note names, aliases and
+   *  tags — so it stops underlining the user's vocabulary (see lib/spell). */
+  const publishVaultWords = (parsed: Record<string, ParsedNote>): void => {
+    const words: string[] = []
+    for (const n of Object.values(parsed)) {
+      words.push(n.name)
+      if (n.aliases) words.push(...n.aliases)
+      words.push(...n.tags)
+    }
+    setVaultWords(words)
   }
 
   // Per-path write chains: every disk write for a path is appended to that path's
@@ -569,6 +593,7 @@ export const useStore = create<VersoState>((set, get) => {
       vaultLoading: false,
       loadedCount: Object.keys(texts).length
     })
+    publishVaultWords(parsed)
   }
 
   /** Load an opened workspace's notes + bases into state, resetting navigation. Shared
@@ -807,6 +832,8 @@ export const useStore = create<VersoState>((set, get) => {
       localStorage.getItem('verso-font') ??
       (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
+    indentGuides: (localStorage.getItem('verso-guides') as IndentGuides | null) ?? 'plain',
+    spellcheck: localStorage.getItem('verso-spellcheck') !== 'off',
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
     homeJournal: localStorage.getItem('verso-home') !== 'last',
     dirty: false,
@@ -870,6 +897,16 @@ export const useStore = create<VersoState>((set, get) => {
     setEditorFont: (editorFont) => {
       localStorage.setItem('verso-font', editorFont)
       set({ editorFont })
+    },
+
+    setIndentGuides: (indentGuides) => {
+      localStorage.setItem('verso-guides', indentGuides)
+      set({ indentGuides })
+    },
+
+    setSpellcheck: (on) => {
+      localStorage.setItem('verso-spellcheck', on ? 'on' : 'off')
+      set({ spellcheck: on })
     },
 
     setEditorFontSize: (editorFontSize) => {

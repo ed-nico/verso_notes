@@ -36,7 +36,9 @@ import { FormatBar } from './FormatBar'
 import { clearFormatter, setFormatter, type Formatter } from '../lib/formatbus'
 import { BaseEmbed } from './BaseView'
 import { NoteEmbed } from './NoteEmbed'
+import { EMBED_BLOCK_RE } from './NotePreview'
 import { CodeBlock, CodeHighlightLayer } from './CodeBlock'
+import { SpellLayer } from './SpellLayer'
 import { MermaidBlock } from './MermaidBlock'
 import { MathBlock } from './Math'
 import { Callout } from './Callout'
@@ -314,6 +316,8 @@ export function BlockEditor({
   })
 
   const files = useStore((s) => s.files)
+  const indentGuides = useStore((s) => s.indentGuides)
+  const spellcheckOn = useStore((s) => s.spellcheck)
   const templates = useMemo(() => templatesFromFiles(files), [files])
   const navigate = useStore((s) => s.navigate)
   const openTag = useStore((s) => s.openTag)
@@ -350,23 +354,31 @@ export function BlockEditor({
   const [spellMenu, setSpellMenu] = useState<{
     blockId: number
     word: string
+    /** Character offset of THIS occurrence, or -1 when the caller only knows the
+     *  word (the rendered row hands over a word, not a position). */
+    at: number
     x: number
     y: number
     suggestions: string[]
   } | null>(null)
-  const openSpellMenu = (blockId: number, word: string, x: number, y: number): void => {
-    setSpellMenu({ blockId, word, x, y, suggestions: [] })
+  const openSpellMenu = (blockId: number, word: string, x: number, y: number, at = -1): void => {
+    setSpellMenu({ blockId, word, at, x, y, suggestions: [] })
     void window.verso.suggestSpelling(word).then((suggestions) =>
       setSpellMenu((prev) =>
         prev && prev.blockId === blockId && prev.word === word ? { ...prev, suggestions } : prev
       )
     )
   }
-  const applySpellFix = (blockId: number, word: string, replacement: string): void => {
+  const applySpellFix = (blockId: number, word: string, at: number, replacement: string): void => {
     const blk = blocks.find((b) => b.id === blockId)
     if (blk) {
-      const re = new RegExp(`\\b${escapeRegExp(word)}\\b`)
-      replaceText(blockId, blk.text.replace(re, replacement))
+      // Replace THIS occurrence when we know where it is. Replacing the first
+      // match instead corrects the wrong word whenever a typo repeats in a line.
+      const next =
+        at >= 0 && blk.text.slice(at, at + word.length) === word
+          ? blk.text.slice(0, at) + replacement + blk.text.slice(at + word.length)
+          : blk.text.replace(new RegExp(`\\b${escapeRegExp(word)}\\b`), replacement)
+      replaceText(blockId, next)
     }
     setSpellMenu(null)
   }
@@ -1119,8 +1131,41 @@ export function BlockEditor({
   const onRowContextMenu = (b: Block, e: React.MouseEvent): void => {
     if (b.type === 'code' || b.type === 'table') return
     e.preventDefault()
+    // A right-click ON A TYPO is a request to fix the typo, never to recolour the
+    // row. The rendered view routes this through the misspelled span's own
+    // handler; while EDITING there are no spans to click — the text is a
+    // textarea — so hit-test the pointer against the underline layer's spans,
+    // which sit at exactly the same coordinates as the words they underline.
+    if (spellcheckOn && editingId === b.id) {
+      const hit = spellSpanAt(b.id, e.clientX, e.clientY)
+      if (hit) {
+        openSpellMenu(b.id, hit.word, e.clientX, e.clientY, hit.start)
+        return
+      }
+    }
     const ids = selIds.has(b.id) ? [...selIds] : [b.id]
     setColorPop({ x: e.clientX, y: e.clientY, ids, current: b.color })
+  }
+
+  /** The misspelled word under (x, y) in the editing block, if any. The mirror
+   *  layer is `pointer-events: none`, so this measures its spans directly rather
+   *  than asking the document what was clicked. */
+  const spellSpanAt = (
+    blockId: number,
+    x: number,
+    y: number
+  ): { word: string; start: number } | null => {
+    const ta = taRefs.current.get(blockId)
+    const layer = ta?.parentElement?.querySelector('.spell-layer')
+    if (!layer) return null
+    for (const el of layer.querySelectorAll<HTMLElement>('.spell-hit')) {
+      for (const r of el.getClientRects()) {
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+          return { word: el.dataset.word ?? el.textContent ?? '', start: Number(el.dataset.start ?? -1) }
+        }
+      }
+    }
+    return null
   }
 
   const insertAfter = (id: number, before: string, after: string): void => {
@@ -1797,7 +1842,7 @@ export function BlockEditor({
       onTag: openTag,
       supertagOf,
       onExpandEntity: expandEntity,
-      spellcheck: true,
+      spellcheck: spellcheckOn,
       onMisspelling:
         blockId != null ? (word, x, y) => openSpellMenu(blockId, word, x, y) : undefined,
       onImageResize: blockId != null ? (src, w) => resizeImage(blockId, src, w) : undefined
@@ -1838,7 +1883,7 @@ export function BlockEditor({
     // `![[Note]]` alone on a line embeds that note, read-only. An `![[file.png]]`
     // is an ASSET embed and keeps its existing rendering — only note targets are
     // transcluded here.
-    const embedM = b.type !== 'code' && b.type !== 'table' && b.text.trim().match(/^!\[\[([^\]\n]+?)\]\]$/)
+    const embedM = b.type !== 'code' && b.type !== 'table' && b.text.trim().match(EMBED_BLOCK_RE)
     if (embedM) {
       const target = embedM[1].split('|')[0].trim()
       if (target && !FILE_LINK_RE.test(target)) return <NoteEmbed raw={target} host={path} />
@@ -1954,9 +1999,20 @@ export function BlockEditor({
     )
     // Code blocks get a live-highlight layer painted underneath the (transparent-text)
     // textarea, so syntax colours show while editing.
-    return mono ? (
-      <div className="code-edit-wrap">
-        <CodeHighlightLayer text={b.text} lang={b.lang} />
+    if (mono) {
+      return (
+        <div className="code-edit-wrap">
+          <CodeHighlightLayer text={b.text} lang={b.lang} />
+          {ta}
+        </div>
+      )
+    }
+    // Prose blocks get the spelling underlines painted underneath, so the marks
+    // don't disappear the moment the block takes focus — which is exactly when
+    // you're most likely to be fixing the typo you just spotted.
+    return spellcheckOn ? (
+      <div className="spell-edit-wrap">
+        <SpellLayer text={b.text} tick={spellTick} />
         {ta}
       </div>
     ) : (
@@ -2223,6 +2279,7 @@ export function BlockEditor({
           acIndex={ac && ac.id === r.block.id ? ac.index : 0}
           activeMatch={activeMatch && activeMatch.id === r.block.id ? activeMatch : null}
           dataTick={dataTick}
+          guides={indentGuides}
           api={rowApi}
         />
       ))}
@@ -2262,7 +2319,7 @@ export function BlockEditor({
           items={[
             ...spellMenu.suggestions.map((s) => ({
               label: s,
-              onClick: () => applySpellFix(spellMenu.blockId, spellMenu.word, s)
+              onClick: () => applySpellFix(spellMenu.blockId, spellMenu.word, spellMenu.at, s)
             })),
             ...(spellMenu.suggestions.length ? [] : [{ label: 'No suggestions', onClick: () => {} }]),
             { label: `Add “${spellMenu.word}” to dictionary`, onClick: () => ignoreSpellWord(spellMenu.word) }

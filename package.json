@@ -1,6 +1,6 @@
 {
   "name": "verso",
-  "version": "0.2.9",
+  "version": "0.2.10",
   "//desktopName": "Pairs with linux.syncDesktopName in electron-builder.yml — without it Linux desktops can't associate running windows with the .desktop entry (wrong taskbar icon / no grouping).",
   "desktopName": "verso.desktop",
   "description": "A local-first note app: a mesh of Obsidian and Logseq, built on Markdown.",

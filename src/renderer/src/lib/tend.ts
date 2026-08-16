@@ -10,6 +10,7 @@ import { parseFrontmatter } from './frontmatter'
 import { codeRanges, escapeRegExp, inRanges } from './md'
 import { basename } from './links'
 import { noteStats } from './stats'
+import { duplicatePairs, type DuplicatePair } from './similar'
 
 /** A note that other notes mention by name without linking to it. */
 export interface Suggestion {
@@ -34,6 +35,8 @@ export interface TendReport {
   /** Untouched for STALE_DAYS+, oldest first. */
   stale: NoteFile[]
   broken: BrokenLink[]
+  /** Pairs of notes that say the same thing (TF-IDF cosine; see similar.ts). */
+  duplicates: DuplicatePair[]
 }
 
 /** Folders whose notes are structural, not garden content (templates, supertag
@@ -101,7 +104,14 @@ export function tendReport(
     (a, b) => b.sources.length - a.sources.length || a.raw.localeCompare(b.raw)
   )
 
-  return { suggestions, orphans, stubs, stale, broken }
+  // Near-duplicates. Journal days are excluded: consecutive days legitimately
+  // look alike (same template, same recurring headings) and reporting them would
+  // bury the real finds. Templates are already excluded by the corpus itself.
+  const duplicates = duplicatePairs(texts, {
+    skip: (p) => JOURNAL_DIR.test(p) || SKIP_DIRS.test(p)
+  })
+
+  return { suggestions, orphans, stubs, stale, broken, duplicates }
 }
 
 /**
