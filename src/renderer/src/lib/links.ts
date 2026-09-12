@@ -77,6 +77,51 @@ export function resolveTarget(raw: string, allPaths: string[]): string | null {
   return resolvePage(parseTarget(raw).page, allPaths)
 }
 
+/**
+ * A resolver over ONE snapshot of the vault's paths, with the lookups prebuilt.
+ *
+ * `resolvePage` scans `allPaths` on every call, which is the right shape for the
+ * UI's one-off "is this link resolved?" checks. A rename is the opposite shape —
+ * thousands of links resolved against one unchanging path set — and there the
+ * linear scan was the entire cost of the operation (2.4s to move one note in a
+ * 4k-note vault). Build this once and hand it to `rewriteLinks` instead.
+ *
+ * PARITY: this must resolve exactly as `resolvePage` does — same precedence,
+ * same tie-breaks, same alias-blindness. `links.test.ts` asserts the two agree.
+ */
+export interface LinkResolver {
+  resolve(page: string): string | null
+}
+
+export function makeResolver(allPaths: string[]): LinkResolver {
+  const byFull = new Map<string, string>() // full path (no ext), lowercased -> path
+  const byBase = new Map<string, string[]>() // basename lowercased -> paths
+  for (const p of allPaths) {
+    const full = stripMd(p).toLowerCase()
+    // FIRST wins, matching resolvePage's `allPaths.find(...)`.
+    if (!byFull.has(full)) byFull.set(full, p)
+    const b = basename(p).toLowerCase()
+    const arr = byBase.get(b)
+    if (arr) arr.push(p)
+    else byBase.set(b, [p])
+  }
+  // Shortest (closest to root) first, so the scans below can stop at their first
+  // hit. Sort is stable, so equal-length paths keep `allPaths` order — which is
+  // how resolvePage breaks that tie too (its comparison is a strict `<`).
+  for (const arr of byBase.values()) arr.sort((a, b) => a.length - b.length)
+
+  return {
+    resolve(page) {
+      if (page === '') return null
+      if (page.includes('/')) return byFull.get(stripMd(page).toLowerCase()) ?? null
+      const cands = byBase.get(page.toLowerCase())
+      if (!cands) return null
+      for (const p of cands) if (basename(p) === page) return p // exact case wins
+      return cands[0]
+    }
+  }
+}
+
 /** Suggest a path for a new note created from an unresolved link. */
 export function pathForNewNote(raw: string): string {
   const { page } = parseTarget(raw)
@@ -94,8 +139,13 @@ export function rewriteLinks(
   text: string,
   oldPath: string,
   newPath: string,
-  allPaths: string[]
+  allPaths: string[] | LinkResolver
 ): string {
+  // A note with no wikilink cannot need rewriting, and a rename asks this of
+  // every note in the vault — so answer it before paying for `codeRanges` and
+  // the match loop. Roughly half a real vault's notes take this exit.
+  if (!text.includes('[[')) return text
+  const resolver = Array.isArray(allPaths) ? makeResolver(allPaths) : allPaths
   const skip = codeRanges(text)
   return text.replace(/\[\[([^\]\n]+?)\]\]/g, (whole, inner: string, offset: number) => {
     if (inRanges(offset, skip)) return whole
@@ -105,7 +155,7 @@ export function rewriteLinks(
     const sep = linkpart.search(/[#^]/)
     const page = (sep === -1 ? linkpart : linkpart.slice(0, sep)).trim()
     const suffix = sep === -1 ? '' : linkpart.slice(sep)
-    if (resolvePage(stripMd(page), allPaths) !== oldPath) return whole
+    if (resolver.resolve(stripMd(page)) !== oldPath) return whole
     const newPage = page.includes('/') ? stripMd(newPath) : basename(newPath)
     return `[[${newPage}${suffix}${aliaspart}]]`
   })

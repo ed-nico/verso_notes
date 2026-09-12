@@ -71,7 +71,8 @@
 
 /* ---------- Journal ---------- */
 .journal-doc {
-  max-width: 800px;
+  /* Inherits `.doc`'s measure; kept as a hook for journal-only tweaks. */
+  max-width: var(--doc-width, calc(760px + 2cm));
 }
 .journal-day {
   padding: 18px 0 24px;

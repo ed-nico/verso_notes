@@ -1,15 +1,30 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useStore } from '../store'
-import { dailyPath, monthGrid, monthLabel, monthOf, todayISO, WEEKDAY_INITIALS } from '../lib/dates'
+import { dailyPath, formatLong, monthGrid, monthLabel, monthOf, todayISO, WEEKDAY_INITIALS } from '../lib/dates'
 
 /** Mini month calendar. Days with a daily note are dotted; clicking picks a date. */
 export function Calendar({ onPick }: { onPick: (iso: string) => void }): React.JSX.Element {
   const today = todayISO()
   const [{ year, month0 }, setMonth] = useState(() => monthOf(today))
   const files = useStore((s) => s.files)
-  const hasNote = (iso: string): boolean => files.some((f) => f.path === dailyPath(iso))
+  // A set, not a scan: `hasNote` is asked 42 times per render, and a linear pass
+  // over a few thousand files each time is the whole cost of drawing the grid.
+  const dailyPaths = useMemo(() => new Set(files.map((f) => f.path)), [files])
+  const hasNote = (iso: string): boolean => dailyPaths.has(dailyPath(iso))
 
   const weeks = monthGrid(year, month0)
+
+  /**
+   * Picking a day that already has a note just opens it. Picking an empty one
+   * CREATES a file, and the grid is a dense 7x6 target that sits under the
+   * pointer all day — a mis-click used to leave a stray blank daily note behind,
+   * which then shows up in search, the graph and Tend forever.
+   */
+  const pick = (iso: string): void => {
+    if (!hasNote(iso) && !window.confirm(`No note for ${formatLong(iso)} yet. Create one?`)) return
+    onPick(iso)
+  }
+
   const step = (delta: number): void => {
     const m = month0 + delta
     setMonth({ year: year + Math.floor(m / 12), month0: ((m % 12) + 12) % 12 })
@@ -45,11 +60,11 @@ export function Calendar({ onPick }: { onPick: (iso: string) => void }): React.J
               key={iso}
               role="button"
               tabIndex={0}
-              onClick={() => onPick(iso)}
+              onClick={() => pick(iso)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
-                  onPick(iso)
+                  pick(iso)
                 }
               }}
             >

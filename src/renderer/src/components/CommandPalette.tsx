@@ -3,6 +3,7 @@ import { useStore, templatesFromFiles } from '../store'
 import { dirname } from '../lib/links'
 import { fuzzyScore, searchNotes } from '../lib/search'
 import { REVEAL_LABEL } from '../lib/platform'
+import { FolderPicker } from './FolderPicker'
 
 interface Item {
   id: string
@@ -45,12 +46,16 @@ export function CommandPalette(): React.JSX.Element | null {
 
   const [query, setQuery] = useState('')
   const [sel, setSel] = useState(0)
+  // The folder picker takes the palette's place rather than opening beside it —
+  // one overlay at a time, and Escape still means "back out of all this".
+  const [moving, setMoving] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (open) {
       setQuery('')
       setSel(0)
+      setMoving(null)
       // focus after mount
       setTimeout(() => inputRef.current?.focus(), 0)
     }
@@ -70,8 +75,9 @@ export function CommandPalette(): React.JSX.Element | null {
     return name.replace(/\.md$/i, '')
   }
 
+  const nameOf = (p: string): string => files.find((f) => f.path === p)?.name ?? p.replace(/\.md$/i, '')
+
   const commands: Item[] = useMemo(() => {
-    const nameOf = (p: string): string => files.find((f) => f.path === p)?.name ?? p.replace(/\.md$/i, '')
     // Actions on the note you're looking at come FIRST: the palette is meant to be
     // the one way in, and "do something to this note" was the job it couldn't do.
     const forNote: Item[] = activePath
@@ -89,6 +95,13 @@ export function CommandPalette(): React.JSX.Element | null {
             icon: '★',
             group: 'This note',
             run: () => act(() => void togglePin(activePath))
+          },
+          {
+            id: 'note-move',
+            label: 'Move this note to a folder…',
+            icon: '▸',
+            group: 'This note',
+            run: () => setMoving(activePath)
           },
           {
             id: 'note-dup',
@@ -253,6 +266,8 @@ export function CommandPalette(): React.JSX.Element | null {
       items[sel]?.run()
     }
   }
+
+  if (moving) return <FolderPicker path={moving} name={nameOf(moving)} onClose={close} />
 
   return (
     <div className="palette-overlay" onMouseDown={close}>

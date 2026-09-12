@@ -123,6 +123,13 @@ Key invariants and patterns:
   rather than being swapped into the split, which a base/journal/graph view couldn't be).
   `view` switches the main pane between the
   editor and the graph/bases/journal/todos/assets/tags screens.
+- Moving a note is `renameNote` with a new directory (`moveToFolder`), reachable by dragging
+  onto a sidebar folder OR via `components/FolderPicker.tsx` (sidebar right-click "Move to
+  folder…" / the palette) — dragging alone doesn't scale past a treeful of folders. The
+  rename rewrites every referrer, so it sweeps the whole vault: keep that sweep cheap (see
+  `links.ts`'s `makeResolver`, and `rewriteLinks`' no-`[[` early exit) and keep the writes
+  parallel — `queueWrite` already chains per path, so awaiting them one at a time only adds
+  round trips.
 - Right panel: every block is a `RightSection` (`components/RightSection.tsx`) whose
   open/closed state persists in localStorage. It has to persist — the panels are keyed by
   note path and remount on every navigation, so component state alone forgot the choice
@@ -146,7 +153,13 @@ Key invariants and patterns:
   (`components/QuickTask.tsx`), writing through to disk immediately rather than via the 600ms
   debounce, since capture is used mid-thought and abandoned.
 - Appearance: `theme` (`ThemeName`: dark / paper / light) + `accent` (see `ACCENTS`) live in
-  localStorage; `customCss` mirrors the vault's `.verso/custom.css` and is injected/hot-reloaded
+  localStorage; so do `editorFont` (`EDITOR_FONTS` — named SYSTEM faces, each with a real
+  fallback chain, since Verso never fetches a font; the `serif` KEY is load-bearing, it's what
+  `applyTheme` picks for paper and what existing prefs persist under) and `readingWidth`
+  (`READING_WIDTHS` → the `--doc-width` variable). One variable feeds every centred writing
+  column — `.doc`, `.journal-doc`, `.backlinks` — which used to disagree at 836/800/760px;
+  keep them on it so a note and its backlinks stay flush.
+   `customCss` mirrors the vault's `.verso/custom.css` and is injected/hot-reloaded
   by App.tsx. **Paper is a LIGHT theme** (warm cream, `html[data-theme='paper']` in
   `styles/panels.css`) — anything that branches on lightness must test `theme === 'dark'`, not
   `theme === 'light'`, or paper silently gets the dark treatment (see App.tsx's accent effect
@@ -256,7 +269,12 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   second full pass over the vault at startup.
 - **`links.ts`** — wikilink resolution (`resolveTarget`, `pathForNewNote`), path helpers
   (`basename`/`dirname`/`stripMd`), and `rewriteLinks` used when renaming notes (code-aware:
-  skips fenced/inline code via `md.ts`'s shared `codeRanges`).
+  skips fenced/inline code via `md.ts`'s shared `codeRanges`). `resolvePage` scans `allPaths`
+  per call, which suits the UI's one-off "is this link resolved?" checks; a rename is the
+  opposite shape (every note, every link, one unchanging path set) so it passes a prebuilt
+  **`makeResolver`** instead — the linear scan there cost 2.4s to move one note in a 4k-note
+  vault, now ~20ms. The two MUST resolve identically; `links.test.ts` asserts it, and
+  `VaultIndex.resolve` is a third implementation of the same rules plus aliases.
 - **`frontmatter.ts`** — YAML frontmatter get/parse/replace, built on the `yaml` package's
   Document API so edits preserve comments, key order, and formatting of untouched keys.
 - **`query.ts`** — the `{{query ...}}` query language, rendered by `QueryView`. Grammar

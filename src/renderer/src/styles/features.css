@@ -421,6 +421,21 @@
   background: var(--accent-dim);
   color: #fff;
 }
+/* More options than fit one joined bar (the font picker). Breaking the segments
+   apart into chips is what lets them wrap — a joined control can't, since its
+   rounded ends and single border belong to the row, not the buttons. */
+.seg.seg-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: none;
+  overflow: visible;
+}
+.seg-wrap .seg-btn {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 13px;
+}
 
 /* ---------- Pane resize handle ---------- */
 .pane-resize {

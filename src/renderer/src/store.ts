@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { CanvasMeta, FileEvent, NoteFile, ParsedNote, TemplateFile, Workspace } from '@shared/types'
 import { parseNote } from './lib/parse'
 import { VaultIndex } from './lib/vault'
-import { basename, dirname, pathForNewNote, resolveTarget, rewriteLinks } from './lib/links'
+import { basename, dirname, makeResolver, pathForNewNote, resolveTarget, rewriteLinks } from './lib/links'
 import { resetSpell, setVaultWords } from './lib/spell'
 import { getFrontmatter, parseFrontmatter, replaceFrontmatter } from './lib/frontmatter'
 import { applyTemplate } from './lib/templates'
@@ -59,12 +59,44 @@ export type HistEntry =
 /** Selectable UI themes: cool dark (default), warm light ("paper"), and cool light. */
 export type ThemeName = 'dark' | 'paper' | 'light'
 
+/**
+ * Faces offered for the writing area, each shown in itself in Settings.
+ *
+ * Named faces rather than a generic "Serif", because the serifs a system carries
+ * differ enough to be a real choice — Charter sets tight and dark, New York is
+ * the SF companion, Georgia is wide and screen-first. Every stack ends in a
+ * generic family: these are SYSTEM fonts, not web fonts (Verso never loads a
+ * font over the network), so a machine without one has to land somewhere sane.
+ *
+ * `serif` keeps its key and its stack from when it was the only serif — prefs
+ * persist under it and `applyTheme` still reaches for it by name, so renaming
+ * the key would silently retypeset every paper-theme vault.
+ */
 export const EDITOR_FONTS: { key: string; label: string; stack: string }[] = [
   { key: 'sans', label: 'Sans', stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif" },
-  { key: 'serif', label: 'Serif', stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif" },
+  { key: 'serif', label: 'Iowan', stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif" },
+  { key: 'charter', label: 'Charter', stack: "Charter, 'Bitstream Charter', 'XCharter', Georgia, serif" },
+  { key: 'new-york', label: 'New York', stack: "'New York', ui-serif, 'Iowan Old Style', Georgia, serif" },
+  { key: 'georgia', label: 'Georgia', stack: "Georgia, 'Nimbus Roman', 'Times New Roman', serif" },
+  { key: 'palatino', label: 'Palatino', stack: "Palatino, 'Palatino Linotype', 'URW Palladio L', Georgia, serif" },
   { key: 'mono', label: 'Mono', stack: 'var(--font-mono)' }
 ]
 export const EDITOR_SIZES = [10, 12, 14, 15, 16, 18, 20]
+
+/**
+ * How wide the writing column runs. A measure, not a pixel count — `normal` is
+ * the width the app has always used, so an existing vault doesn't reflow.
+ *
+ * One variable feeds every centred column (the note, the journal, backlinks),
+ * which previously disagreed with each other at 836 / 800 / 760px — the note and
+ * the backlinks below it visibly failed to line up.
+ */
+export const READING_WIDTHS: { key: string; label: string; css: string }[] = [
+  { key: 'snug', label: 'Snug', css: '640px' },
+  { key: 'normal', label: 'Normal', css: 'calc(760px + 2cm)' },
+  { key: 'wide', label: 'Wide', css: '1040px' },
+  { key: 'full', label: 'Full', css: 'none' }
+]
 
 /** One theme's worth of accent variables (`--accent` / `--accent-dim` / `--link`).
  *  `accentDim` doubles as the selection background (white text sits on it). */
@@ -168,6 +200,8 @@ interface VersoState {
   /** Editor font family key (see EDITOR_FONTS) and base font size in px. */
   editorFont: string
   editorFontSize: number
+  /** Writing-column measure key (see READING_WIDTHS). */
+  readingWidth: string
   /** Vertical guides down the outliner's indent levels: off, one faint line per
    *  level, or a colour per depth ("rainbow" — the depth is easier to count when
    *  the levels differ rather than repeat). */
@@ -223,6 +257,7 @@ interface VersoState {
   addTaskToToday: (text: string) => Promise<void>
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
+  setReadingWidth: (key: string) => void
   setIndentGuides: (mode: IndentGuides) => void
   setSpellcheck: (on: boolean) => void
   setSmartLinkTitles: (on: boolean) => void
@@ -832,6 +867,7 @@ export const useStore = create<VersoState>((set, get) => {
       localStorage.getItem('verso-font') ??
       (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
+    readingWidth: localStorage.getItem('verso-reading-width') ?? 'normal',
     indentGuides: (localStorage.getItem('verso-guides') as IndentGuides | null) ?? 'plain',
     spellcheck: localStorage.getItem('verso-spellcheck') !== 'off',
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
@@ -907,6 +943,11 @@ export const useStore = create<VersoState>((set, get) => {
     setSpellcheck: (on) => {
       localStorage.setItem('verso-spellcheck', on ? 'on' : 'off')
       set({ spellcheck: on })
+    },
+
+    setReadingWidth: (readingWidth) => {
+      localStorage.setItem('verso-reading-width', readingWidth)
+      set({ readingWidth })
     },
 
     setEditorFontSize: (editorFontSize) => {
@@ -1665,31 +1706,39 @@ export const useStore = create<VersoState>((set, get) => {
         // Snapshot AFTER the awaits above so keystrokes typed meanwhile are included.
         const state = get()
         const oldAllPaths = state.files.map((f) => f.path)
+        // One resolver for the whole sweep. Every note in the vault gets scanned
+        // here, and resolving each link against `oldAllPaths` linearly made that
+        // O(notes x links x paths) — 2.4s to move one note in a 4k-note vault.
+        const resolver = makeResolver(oldAllPaths)
         // Compute every rewrite up front. The renamed note's own body may link to
         // itself by its old name, so it's rewritten too.
         const own = state.texts[oldPath] ?? ''
-        const rewrites = new Map<string, string>([[newPath, rewriteLinks(own, oldPath, newPath, oldAllPaths)]])
+        const rewrites = new Map<string, string>([[newPath, rewriteLinks(own, oldPath, newPath, resolver)]])
         for (const [p, t] of Object.entries(state.texts)) {
           if (p === oldPath) continue
-          const rewritten = rewriteLinks(t, oldPath, newPath, oldAllPaths)
+          const rewritten = rewriteLinks(t, oldPath, newPath, resolver)
           if (rewritten !== t) rewrites.set(p, rewritten)
         }
         // An edit buffered during the rename follows the file / gets the rewrite
         // applied, so its eventual flush can't undo what we're about to write.
         if (pending.has(oldPath)) {
-          pending.set(newPath, rewriteLinks(pending.get(oldPath)!, oldPath, newPath, oldAllPaths))
+          pending.set(newPath, rewriteLinks(pending.get(oldPath)!, oldPath, newPath, resolver))
           pending.delete(oldPath)
         }
         for (const p of rewrites.keys()) {
           if (p !== newPath && pending.has(p)) {
-            pending.set(p, rewriteLinks(pending.get(p)!, oldPath, newPath, oldAllPaths))
+            pending.set(p, rewriteLinks(pending.get(p)!, oldPath, newPath, resolver))
           }
         }
-        // Persist the changed files.
-        if (rewrites.get(newPath) !== own) await queueWrite(newPath, rewrites.get(newPath)!)
+        // Persist the changed files. Fired together rather than awaited one by
+        // one: a rename can touch hundreds of referrers, and `queueWrite` already
+        // chains per path, so the ordering that matters is preserved.
+        const writes: Promise<unknown>[] = []
         for (const [p, t] of rewrites) {
-          if (p !== newPath) await queueWrite(p, t)
+          if (p === newPath && t === own) continue // the move alone changed nothing in it
+          writes.push(queueWrite(p, t))
         }
+        await Promise.all(writes)
         // Merge onto the freshest state (watcher events / keystrokes may have landed
         // mid-rename) and reparse only the notes that actually changed.
         set((s) => {
@@ -1714,19 +1763,23 @@ export const useStore = create<VersoState>((set, get) => {
             history: remapHistory(s.history, oldPath, newPath)
           }
         })
-        // Canvas cards point at notes by path — retarget any that referenced the old path.
-        for (const c of get().canvases) {
-          const doc = normalizeDoc(await window.verso.readCanvas(c.path))
-          let changed = false
-          const nodes = doc.nodes.map((n) => {
-            if (n.type === 'file' && n.file === oldPath) {
-              changed = true
-              return { ...n, file: newPath }
-            }
-            return n
+        // Canvas cards point at notes by path — retarget any that referenced the
+        // old one. Read in parallel; most vaults have no canvases at all, and this
+        // is otherwise a round trip per canvas after the UI has already updated.
+        await Promise.all(
+          get().canvases.map(async (c) => {
+            const doc = normalizeDoc(await window.verso.readCanvas(c.path))
+            let hit = false
+            const nodes = doc.nodes.map((n) => {
+              if (n.type === 'file' && n.file === oldPath) {
+                hit = true
+                return { ...n, file: newPath }
+              }
+              return n
+            })
+            if (hit) await window.verso.writeCanvas(c.path, { ...doc, nodes })
           })
-          if (changed) await window.verso.writeCanvas(c.path, { ...doc, nodes })
-        }
+        )
       } catch (e) {
         // The file moved but a referrer-rewrite failed partway through, so memory and
         // disk may now disagree. Re-scan from disk to reconcile to a consistent state.

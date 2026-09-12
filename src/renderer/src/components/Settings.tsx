@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useStore, EDITOR_FONTS, EDITOR_SIZES, ACCENTS, type IndentGuides } from '../store'
+import { useStore, EDITOR_FONTS, EDITOR_SIZES, READING_WIDTHS, ACCENTS, type IndentGuides } from '../store'
 
 const GUIDE_MODES: { value: IndentGuides; label: string }[] = [
   { value: 'off', label: 'Off' },
@@ -29,6 +29,8 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
   const editorFont = useStore((s) => s.editorFont)
   const setEditorFont = useStore((s) => s.setEditorFont)
   const editorFontSize = useStore((s) => s.editorFontSize)
+  const readingWidth = useStore((s) => s.readingWidth)
+  const setReadingWidth = useStore((s) => s.setReadingWidth)
   const setEditorFontSize = useStore((s) => s.setEditorFontSize)
   const indentGuides = useStore((s) => s.indentGuides)
   const setIndentGuides = useStore((s) => s.setIndentGuides)
@@ -108,7 +110,9 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
 
         <div className="settings-section">
           <div className="settings-label">Editor font</div>
-          <div className="seg">
+          {/* Wraps, because there are more faces than fit one row — and each button
+              is set in its own face, so the control is its own specimen sheet. */}
+          <div className="seg seg-wrap">
             {EDITOR_FONTS.map((f) => (
               <button
                 key={f.key}
@@ -119,6 +123,10 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
                 {f.label}
               </button>
             ))}
+          </div>
+          <div className="settings-hint">
+            System faces only — Verso never fetches a font, so one your machine lacks falls back to
+            the nearest it has.
           </div>
         </div>
 
@@ -136,6 +144,25 @@ export function Settings({ onClose }: { onClose: () => void }): React.JSX.Elemen
             ))}
           </div>
           <div className="settings-hint">Sets the size and typeface of the writing area. Code stays monospace.</div>
+        </div>
+
+        <div className="settings-section">
+          <div className="settings-label">Reading width</div>
+          <div className="seg">
+            {READING_WIDTHS.map((w) => (
+              <button
+                key={w.key}
+                className={'seg-btn' + (readingWidth === w.key ? ' active' : '')}
+                onClick={() => setReadingWidth(w.key)}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+          <div className="settings-hint">
+            How far a line of prose runs before it wraps. Applies to notes, the journal and
+            backlinks alike; wide panels on either side still narrow it.
+          </div>
         </div>
 
         <div className="settings-section">

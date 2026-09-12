@@ -186,7 +186,7 @@ del {
 
 /* ---------- Backlinks ---------- */
 .backlinks {
-  max-width: 760px;
+  max-width: var(--doc-width, calc(760px + 2cm));
   margin: 0 auto;
   padding: 0 48px 60px;
   border-top: 1px solid var(--border);
