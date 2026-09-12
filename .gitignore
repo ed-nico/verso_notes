@@ -6,6 +6,9 @@ dist/
 .DS_Store
 .claude/
 test-vault/
+# The Android app lives on a local-only `mobile` branch and must never reach the
+# public repo. Ignored here so a `git add -A` on main can't sweep it in.
+mobile/
 # Heavy social-media images (not referenced by the app or README)
 branding/x-*.png
 branding/x-*.svg

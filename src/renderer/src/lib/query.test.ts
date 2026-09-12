@@ -465,3 +465,108 @@ describe('isStructuredQuery', () => {
     expect(isStructuredQuery('#book todo')).toBe(true)
   })
 })
+
+describe('follow:', () => {
+  /**
+   * A small family tree, wired only in one direction: each note names its parent
+   * and nothing names its children. Getting the children back out is the whole
+   * point — it is what bidirectional fields tried to do by WRITING an inverse
+   * property, and what this does by reading the backlink index.
+   *
+   *   Root
+   *   |- Alpha
+   *   |  |- Leaf One   #deep
+   *   |  `- Leaf Two
+   *   `- Bravo
+   */
+  const FAMILY: Record<string, string> = {
+    'Root.md': '# Root\n\nthe top',
+    'Alpha.md': '---\nparent: "[[Root]]"\n---\n\nalpha body',
+    'Bravo.md': '---\nparent: "[[Root]]"\n---\n\nbravo body',
+    'Leaf One.md': '---\nparent: "[[Alpha]]"\n---\n\nleaf one #deep',
+    'Leaf Two.md': '---\nparent: "[[Alpha]]"\n---\n\nleaf two'
+  }
+  const family = (): VaultIndex =>
+    new VaultIndex(
+      Object.entries(FAMILY).map(([p, t]) => parseNote(p, t)),
+      { ...FAMILY }
+    )
+  const names = (idx: VaultIndex, q: string, host?: string): string[] =>
+    (idx.runQuery(q, host).notes ?? []).map((n) => n.name).sort()
+
+  it('parses direction and depth off the directive', () => {
+    expect(parseQuery('follow:parent').follow).toEqual([{ field: 'parent', reverse: false, deep: false }])
+    expect(parseQuery('follow:-parent*').follow).toEqual([{ field: 'parent', reverse: true, deep: true }])
+  })
+
+  it('chains several hops in written order', () => {
+    expect(parseQuery('follow:parent follow:-owner*').follow).toEqual([
+      { field: 'parent', reverse: false, deep: false },
+      { field: 'owner', reverse: true, deep: true }
+    ])
+  })
+
+  it('follows a link field forward one hop', () => {
+    expect(names(family(), 'follow:parent scope:notes', 'Leaf One.md')).toEqual(['Alpha'])
+  })
+
+  it('follows it all the way up with *', () => {
+    expect(names(family(), 'follow:parent* scope:notes', 'Leaf One.md')).toEqual(['Alpha', 'Root'])
+  })
+
+  it('walks backwards to children, with no inverse property on disk', () => {
+    expect(names(family(), 'follow:-parent scope:notes', 'Root.md')).toEqual(['Alpha', 'Bravo'])
+  })
+
+  it('walks backwards transitively to the whole subtree', () => {
+    expect(names(family(), 'follow:-parent* scope:notes', 'Root.md')).toEqual([
+      'Alpha',
+      'Bravo',
+      'Leaf One',
+      'Leaf Two'
+    ])
+  })
+
+  it('never returns the note it started from', () => {
+    // Root is its own grandparent's child; a naive walk would hand Root back.
+    expect(names(family(), 'follow:-parent* scope:notes', 'Root.md')).not.toContain('Root')
+  })
+
+  it('chains hops — up to the parent and back down is "my siblings"', () => {
+    // Not "me and my siblings": the host is dropped from its own results, which
+    // is what makes the chain read as a relationship rather than a set union.
+    expect(names(family(), 'follow:parent follow:-parent scope:notes', 'Leaf One.md')).toEqual([
+      'Leaf Two'
+    ])
+  })
+
+  it('narrows the followed set with ordinary terms', () => {
+    expect(names(family(), 'follow:-parent* #deep scope:notes', 'Root.md')).toEqual(['Leaf One'])
+  })
+
+  it('restricts block scope to the followed notes', () => {
+    const rows = family().runQuery('follow:-parent* body', 'Root.md').blocks
+    expect(rows.map((b) => b.name).sort()).toEqual(['Alpha', 'Bravo'])
+  })
+
+  it('matches nothing when there is no host note to start from', () => {
+    const res = family().runQuery('follow:-parent* scope:notes')
+    expect(res.notes).toBeNull()
+    expect(res.total).toBe(0)
+  })
+
+  it('terminates on a cycle', () => {
+    const cyclic = { 'A.md': '---\nnext: "[[B]]"\n---\n', 'B.md': '---\nnext: "[[A]]"\n---\n' }
+    const idx = new VaultIndex(
+      Object.entries(cyclic).map(([p, t]) => parseNote(p, t)),
+      { ...cyclic }
+    )
+    expect(names(idx, 'follow:next* scope:notes', 'A.md')).toEqual(['B'])
+  })
+
+  it('ignores a field that points nowhere', () => {
+    const orphan = { 'A.md': '---\nparent: "[[Ghost]]"\n---\n' }
+    const idx = new VaultIndex([parseNote('A.md', orphan['A.md'])], { ...orphan })
+    expect(names(idx, 'follow:parent scope:notes', 'A.md')).toEqual([])
+  })
+})

@@ -264,6 +264,16 @@ function SideNote({ path, paneIndex }: { path: string; paneIndex: number }): Rea
           </button>
         </div>
       </div>
+      {/* Properties travel with the note, and a split IS a note view. The right
+          panel is hidden whenever a split is open (the window has no room for
+          both), so without this a note opened beside a base — the very place its
+          frontmatter matters most — had nowhere to show or edit it. Collapsible
+          and remembered, like the right panel's own sections. */}
+      <div className="side-note-props">
+        <RightSection id="side-properties" title="Properties">
+          <PropertiesPanel key={path} path={path} />
+        </RightSection>
+      </div>
       <NoteArea path={path} />
     </div>
   )

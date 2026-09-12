@@ -4,6 +4,7 @@ import { tendReport, type Suggestion, type BrokenLink } from '../lib/tend'
 import type { DuplicatePair } from '../lib/similar'
 import { basename, dirname } from '../lib/links'
 import { CompareView } from './CompareView'
+import { FolderPicker } from './FolderPicker'
 import type { NoteFile } from '@shared/types'
 import { VaultLoadingNote } from './VaultLoading'
 
@@ -157,7 +158,10 @@ export function TendView(): React.JSX.Element {
   const files = useStore((s) => s.files)
   const index = useStore((s) => s.index)
   const openNote = useStore((s) => s.openNote)
+  const tendIgnore = useStore((s) => s.tendIgnore)
+  const setTendIgnore = useStore((s) => s.setTendIgnore)
   const [compare, setCompare] = useState<{ a: string; b: string } | null>(null)
+  const [picking, setPicking] = useState(false)
 
   // The scan is vault-wide, so recompute only when the index generation changes
   // (the view is unmounted when not shown — nothing runs while typing elsewhere).
@@ -169,9 +173,10 @@ export function TendView(): React.JSX.Element {
       texts,
       (raw) => index.resolvePath(raw),
       (p) => index.backlinkCount(p),
-      Date.now()
+      Date.now(),
+      tendIgnore
     )
-  }, [files, index])
+  }, [files, index, tendIgnore])
 
   const total =
     report.duplicates.length +
@@ -196,6 +201,15 @@ export function TendView(): React.JSX.Element {
   return (
     <div className="scroll-area">
       {compare && <CompareView a={compare.a} b={compare.b} onClose={() => setCompare(null)} />}
+      {picking && (
+        <FolderPicker
+          path=""
+          name=""
+          placeholder="Tend should ignore…"
+          onPick={(f) => f && !tendIgnore.includes(f) && setTendIgnore([...tendIgnore, f])}
+          onClose={() => setPicking(false)}
+        />
+      )}
       <div className="doc tend">
         <VaultLoadingNote what="Suggestions will change as more notes load." />
         <div className="tend-head">
@@ -207,6 +221,26 @@ export function TendView(): React.JSX.Element {
         <p className="tend-intro">
           Connections you haven't made yet, and notes that need care. A healthy garden links together.
         </p>
+        {/* Reference material — scripture, workout logs, imported archives — is
+            full of notes that look alike and link to nothing. Reported forever,
+            they bury the real finds and the page stops being worth opening. */}
+        <div className="tend-ignore">
+          <span className="tend-ignore-label">Not tended:</span>
+          {tendIgnore.length === 0 && <span className="tend-detail">nothing yet</span>}
+          {tendIgnore.map((f) => (
+            <button
+              key={f}
+              className="tend-chip"
+              title={`Tend ${f} again`}
+              onClick={() => setTendIgnore(tendIgnore.filter((x) => x !== f))}
+            >
+              {f} <span className="tend-chip-x">×</span>
+            </button>
+          ))}
+          <button className="btn ghost" onClick={() => setPicking(true)}>
+            ＋ Ignore a folder…
+          </button>
+        </div>
         {total === 0 ? (
           <p className="tend-empty">Nothing to tend — the garden is healthy. 🌿</p>
         ) : (

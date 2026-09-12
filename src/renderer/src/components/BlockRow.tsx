@@ -179,7 +179,6 @@ export const BlockRow = React.memo(function BlockRow({
           (isEditing ? '' : ' bl-cv')
         }
         data-block-id={b.id}
-        data-color={b.color}
         style={{ paddingLeft: depth * INDENT, ...guideStyle(depth, guides) }}
         onContextMenu={(e) => h.onRowContextMenu(b, e)}
       >

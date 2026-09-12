@@ -48,6 +48,24 @@
  *                 status, excerpt, path. NO SPACES around the commas — the
  *                 language is whitespace-tokenized, so a space ends the directive.
  *   as:layout   — list (default for blocks) | table (default for notes) | gallery
+ *   follow:field — travel along a frontmatter LINK property instead of searching
+ *                 the whole vault. The walk starts at the note holding the query,
+ *                 and what it reaches becomes the set the rest of the query
+ *                 filters. `follow:-field` walks BACKWARDS (notes whose `field`
+ *                 points here), and a trailing `*` keeps going as far as it goes:
+ *
+ *                   follow:parent      the note's parent
+ *                   follow:parent*     every ancestor
+ *                   follow:-parent     its children — with no inverse property
+ *                                      written to disk anywhere
+ *                   follow:-parent*    the whole subtree beneath it
+ *
+ *                 Several `follow:`s chain left to right, each starting from what
+ *                 the last one reached. The starting note is never in its own
+ *                 results, and cycles terminate (each note is visited once).
+ *                 A query with no host note to start from — the sidebar search,
+ *                 the builder's preview — matches nothing rather than quietly
+ *                 falling back to the whole vault.
  *
  * An unrecognized directive value degrades to a plain word term, matching how
  * `before:` handles an unparseable date — a typo narrows the search instead of
@@ -108,6 +126,16 @@ const SORT_KEYS = new Set<string>(['date', 'name', 'path', 'text', 'line', 'stat
 export type GroupKey = 'note' | 'tag' | 'date' | 'status'
 const GROUP_KEYS = new Set<string>(['note', 'tag', 'date', 'status'])
 
+/** One hop of a `follow:` chain. */
+export interface FollowStep {
+  /** Frontmatter link property to travel along, lowercased. */
+  field: string
+  /** Travel backwards — notes whose `field` points AT the current set. */
+  reverse: boolean
+  /** Keep hopping until the set stops growing (`*`). */
+  deep: boolean
+}
+
 export type QueryLayout = 'list' | 'table' | 'gallery'
 
 /** What a row IS. Blocks (lines) by default; `scope:notes` makes rows whole notes. */
@@ -132,7 +160,8 @@ export interface QuerySpec {
   /** OR-groups; a block matches when EVERY atom of ANY group passes. */
   groups: QueryGroup[]
   /** True when no criteria were given (matches nothing rather than everything).
-   *  Directives alone don't count as criteria — `{{query limit:5}}` matches nothing. */
+   *  Shaping directives alone don't count — `{{query limit:5}}` matches nothing.
+   *  `follow:` DOES count: it picks the notes rather than arranging them. */
   empty: boolean
   /** `sort:` directive, or undefined to keep vault order. */
   sort?: { key: SortKey; dir: 'asc' | 'desc' }
@@ -147,6 +176,9 @@ export interface QuerySpec {
   /** `cols:` directive — frontmatter keys (plus the pseudo-columns `name`, `tags`,
    *  `date`, `status`, `excerpt`) shown for `scope:notes`. */
   cols?: string[]
+  /** `follow:` chain. When present the query runs over the notes the walk reaches
+   *  rather than the whole vault (see the grammar note above). */
+  follow?: FollowStep[]
 }
 
 /** One `group:`ed bucket of results. Carries whichever kind the scope produced. */
@@ -202,7 +234,11 @@ export function parseQuery(raw: string): QuerySpec {
   return {
     ...shape,
     groups: kept,
-    empty: kept.length === 0,
+    // `follow:` is the one directive that SELECTS rather than shapes, so it alone
+    // is enough to make a query. "My children" (`follow:-parent`) is a complete
+    // request, and demanding a filler term beside it would defeat the point;
+    // `limit:5` on its own still matches nothing, because it selects nothing.
+    empty: kept.length === 0 && !shape.follow?.length,
     scope,
     // Notes default to a table: a note row is a set of properties, and rendering
     // it as a bare list throws away the columns that made it note-scoped.
@@ -217,10 +253,20 @@ export function parseQuery(raw: string): QuerySpec {
  * behaviour as `before:` with an unparseable date).
  */
 function applyDirective(tok: string, shape: Partial<QuerySpec>): boolean {
-  const m = /^(sort|group|limit|as|scope|cols):(.+)$/i.exec(tok)
+  const m = /^(sort|group|limit|as|scope|cols|follow):(.+)$/i.exec(tok)
   if (!m) return false
   const kind = m[1].toLowerCase()
   const raw = m[2]
+
+  if (kind === 'follow') {
+    // -field = backwards, field* = as far as it goes; both may combine.
+    const fm = /^(-?)(.+?)(\*?)$/.exec(raw)
+    const field = fm?.[2].trim().toLowerCase()
+    if (!field) return false
+    // Chains accumulate in written order — each hop starts where the last ended.
+    ;(shape.follow ??= []).push({ field, reverse: fm![1] === '-', deep: fm![3] === '*' })
+    return true
+  }
 
   if (kind === 'limit') {
     const n = Number(raw)
@@ -316,7 +362,7 @@ export function isStructuredQuery(raw: string): boolean {
   if (!raw.trim()) return false
   const spec = parseQuery(raw)
   if (spec.groups.length > 1) return true
-  if (spec.sort || spec.groupBy || spec.limit !== undefined || spec.cols) return true
+  if (spec.sort || spec.groupBy || spec.limit !== undefined || spec.cols || spec.follow) return true
   if (spec.scope !== 'blocks' || spec.layout !== 'list') return true
   return spec.groups.some((g) =>
     g.atoms.some((a) => a.negated || a.kind === 'tag' || a.kind === 'link' || a.kind === 'date' || a.kind === 'prop')
@@ -464,6 +510,10 @@ function matchAtom(b: QueryBlock, a: Atom): boolean {
 
 export function matchBlock(b: QueryBlock, spec: QuerySpec): boolean {
   if (spec.empty) return false
+  // No atoms but not empty means `follow:` did the selecting — the candidate set
+  // it produced IS the answer, so everything in it passes. (`[].some()` is false,
+  // which would otherwise make `follow:-parent` on its own return nothing.)
+  if (!spec.groups.length) return true
   return spec.groups.some((g) => g.atoms.every((a) => matchAtom(b, a) !== a.negated))
 }
 
@@ -506,6 +556,7 @@ function matchNoteAtom(n: QueryNote, body: string, a: Atom): boolean {
 
 export function matchNote(n: QueryNote, body: string, spec: QuerySpec): boolean {
   if (spec.empty) return false
+  if (!spec.groups.length) return true // see matchBlock: the `follow:` set is the answer
   return spec.groups.some((g) => g.atoms.every((a) => matchNoteAtom(n, body, a) !== a.negated))
 }
 

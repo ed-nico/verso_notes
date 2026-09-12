@@ -167,7 +167,10 @@ export function Sidebar(): React.JSX.Element {
       // only scope that can match a note whose tags live in frontmatter and whose
       // body has no blocks at all. An explicit `scope:` in the text still wins.
       const raw = /(^|\s)scope:/i.test(q) ? q : `${q} scope:notes`
-      const res = index.runQuery(raw)
+      // `follow:` walks out from a note, and in the search box the note you're
+      // looking at is the only sensible place to start — so `follow:-parent` here
+      // reads as "children of this note". Without a host it would match nothing.
+      const res = index.runQuery(raw, activePath ?? undefined)
       const rows = res.notes ?? []
       return rows.slice(0, 200).map((n) => ({
         path: n.path,

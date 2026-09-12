@@ -116,13 +116,25 @@ Key invariants and patterns:
   `<root>/.verso/bases.json` (loaded in `bootstrap`/`openWorkspace`, saved by `setBases`), with
   a one-time migration from the old `verso-bases` localStorage key. Don't reintroduce
   localStorage for vault data — it splits between the dev (`localhost`) and packaged (`file://`) origins.
+- **Daily notes are created on first EDIT, not first view.** `ensureDailyNote` writes the file
+  and is for DELIBERATE acts (clicking a date, ⌘D, quick capture); the journal feed calls
+  `primeDailyNote`, which puts the template text in `texts` only — no `parsed` entry, so an
+  unwritten day never reaches the index, search, the graph or Tend, and the first keystroke is
+  what hits disk. Creating on view is how a second device minted a blank template over a day
+  the first device had already filled in, which whole-file sync then surfaced as a conflict.
+  Relatedly, `queueWrite` registers a written path in `files` if it wasn't there: `writeNote`
+  echo-suppresses its own watcher event, so a write to an unseen path would otherwise create a
+  note that never appears in the tree.
 - Navigation is panes, not tabs: a main pane (with back/forward `history`, capped at 200
   steps) plus any number of right-hand splits (`sidePanes: SidePane[]` — cmd-clicked notes /
   open PDFs; `closeSidePane(i?)` closes one, `promoteSidePane(i)` moves a note split into
   the main pane — via `openNote`, so whatever the main pane was showing is one Back away
   rather than being swapped into the split, which a base/journal/graph view couldn't be).
   `view` switches the main pane between the
-  editor and the graph/bases/journal/todos/assets/tags screens.
+  editor and the graph/bases/journal/todos/assets/tags screens. A note split
+  renders its OWN Properties section (`App.tsx`'s `SideNote`): the right panel is
+  hidden whenever a split is open, so a note opened beside a base — where its
+  frontmatter matters most — otherwise had nowhere to show or edit it.
 - Moving a note is `renameNote` with a new directory (`moveToFolder`), reachable by dragging
   onto a sidebar folder OR via `components/FolderPicker.tsx` (sidebar right-click "Move to
   folder…" / the palette) — dragging alone doesn't scale past a treeful of folders. The
@@ -178,9 +190,9 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   click-to-write tail. `/template` (and the sidebar right-click "Apply template") merge a
   template's frontmatter + body into the CURRENT note via `applyTemplateToNote`/`insertTemplate`.
 - **`components/BlockRow.tsx`** — one memoized outliner row; indent guides are one
-  background-IMAGE gradient per row (never the `background` shorthand — row colour tints and
-  the selected fill are background-COLOURS from CSS), so a deep outline costs no extra DOM; a keystroke re-renders only the
-  edited block. Rows read the latest editor closures through a `RowApi` ref and re-render on
+  background-IMAGE gradient per row (never the `background` shorthand — the selected fill is a
+  background-COLOUR from CSS and the shorthand would clear the guides), so a deep outline costs
+  no extra DOM; a keystroke re-renders only the edited block. Rows read the latest editor closures through a `RowApi` ref and re-render on
   scalar prop changes plus a `dataTick` that bumps when parsed/files/index/spellcheck change.
   If you add a field to `Block`, the row's shallow compare picks it up automatically.
   Non-editing rows carry `.bl-cv` (`content-visibility: auto`) so the browser skips layout
@@ -203,16 +215,13 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   next textarea mounts (it can't be placed at the call site — the element doesn't exist yet).
 - **`lib/blocks.ts`** — block model: parse/serialize markdown ↔ `Block[]`, indentation,
   shortcut detection, visible/foldable logic. The editor's data layer. Round-trips preserve
-  `^block-anchor` markers (`Block.anchor`), row highlights (`Block.color`) and ordered-list
-  numbering (`Block.ordinal`).
+  `^block-anchor` markers (`Block.anchor`) and ordered-list numbering (`Block.ordinal`).
   Consecutive `>` lines fold into ONE `quote` block with the markers stripped (a bare `>` is a
   blank line inside it), so a callout's whole body is a single block.
-  A row's colour rides on the LINE as a trailing `%%color:green%%` (stripped on parse,
-  re-appended on save, just inside any `^anchor`) — deliberately not a frontmatter map keyed
-  by block position, because position isn't identity: inserting a paragraph would repaint
-  every colour below it, and an external edit would drift the whole map. `%%…%%` is
-  Obsidian's comment syntax, so the marker stays invisible there too. Right-click a row for
-  `components/ColorPalette.tsx`; the colours are `propColors`' tokens, shared with Select chips.
+  Row highlights were REMOVED (Eds: the right-click palette was in the way of spellcheck).
+  `COLOR_RE` survives as a one-line strip so a `%%color:green%%` written by an older build
+  never shows as literal text; it is not written back, so the residue clears as notes are
+  edited. Right-clicking a row is now only ever a request to fix the typo under the pointer.
 - **`components/MermaidBlock.tsx`** + **`lib/mermaid.ts`** — a ```` ```mermaid ```` fence
   renders as a diagram instead of code (dispatched from `renderRich`'s `code` branch on
   `Block.lang`). `renderMermaid` is the ONE seam to the engine: it lazy-imports `mermaid`,
@@ -291,6 +300,16 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   term: it's read as a property name, so `sort:-Year` orders by frontmatter (degrading it
   made the query silently search for the literal text "sort:-year").
   `runQuery` returns the shaped `QueryResult` — `blocks` XOR `notes`.
+  **`follow:field`** is the one directive that SELECTS rather than shapes: it replaces the
+  vault-wide candidate set with the notes reached by walking a frontmatter LINK property out
+  from the note holding the query (`runQuery(raw, host)`). `-` reverses the walk, `*` takes the
+  transitive closure, and several chain left to right. Reverse hops read `backlinks`, which is
+  already keyed by target and carries each link's `prop` — which is why `follow:-parent`
+  ("my children") costs a map lookup and needs no inverse property written to disk. That is
+  the whole point: it is the read-time replacement for the bidirectional fields Eds had
+  removed. The host is never in its own results and each note is visited once, so cycles
+  terminate. Because it selects, it alone makes `spec.empty` false, and `matchBlock`/
+  `matchNote` treat "no atom groups" as "everything in the set passes".
 - **`isStructuredQuery`** is the switch behind ONE search box: plain words go to
   `search.ts` (fuzzy name + full text), anything using query syntax goes to the query
   engine (the sidebar appends `scope:notes` unless the text names a scope). Bare
@@ -309,7 +328,11 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   modal, opened from the page ⋯ menu / palette on the active note).
 - **`tend.ts`** — the Tend ("gardener") report: suggested connections (note names co-mentioned
   without links, one combined-alternation scan), orphans, stubs, stale notes, broken links,
-  and near-duplicates. Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`); a duplicate
+  and near-duplicates. Folders the user has excluded (`ignoreTest`, from `.verso/tend.json`
+  via `store.tendIgnore`) are skipped as targets AND as mention sources: reference material —
+  scripture, workout logs, an imported archive — is full of notes that look alike and link to
+  nothing, and reporting them forever is what makes the page not worth opening. The test
+  matches on a `/` boundary, so `Bible` never swallows `Bibles.md`. Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`); a duplicate
   pair opens `CompareView`, a side-by-side line diff that deliberately WRITES NOTHING —
   deciding what a duplicate means (keep, merge, link) is the user's, and a wrong auto-merge
   is unrecoverable.

@@ -15,8 +15,18 @@ function cell(v: unknown): string {
   return String(v)
 }
 
-/** Live, read-only results for a `{{query ...}}` block. */
-export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void }): React.JSX.Element {
+/** Live, read-only results for a `{{query ...}}` block. `host` is the note the
+ *  block sits in — `follow:` walks out from there, so without it such a query has
+ *  nowhere to start and returns nothing. */
+export function QueryView({
+  raw,
+  host,
+  onEdit
+}: {
+  raw: string
+  host?: string
+  onEdit?: () => void
+}): React.JSX.Element {
   const index = useStore((s) => s.index)
   const files = useStore((s) => s.files)
   const previewInSidePane = useStore((s) => s.previewInSidePane)
@@ -24,7 +34,7 @@ export function QueryView({ raw, onEdit }: { raw: string; onEdit?: () => void })
   const navigate = useStore((s) => s.navigate)
   const toggleTask = useStore((s) => s.toggleTask)
 
-  const result = useMemo(() => index.runQuery(raw), [index, raw])
+  const result = useMemo(() => index.runQuery(raw, host), [index, raw, host])
   const { spec, blocks, notes, groups, total } = result
   const cols = spec.cols?.length ? spec.cols : DEFAULT_COLS
 

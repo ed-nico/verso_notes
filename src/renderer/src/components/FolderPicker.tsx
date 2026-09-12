@@ -19,10 +19,18 @@ import { fuzzyScore } from '../lib/search'
 export function FolderPicker({
   path,
   name,
+  placeholder,
+  onPick,
   onClose
 }: {
+  /** The note being moved — also the folder excluded from the list. Pass '' when
+   *  picking a folder for something other than a move. */
   path: string
   name: string
+  placeholder?: string
+  /** Given, this runs instead of moving the note — the picker is then just a
+   *  filterable folder list (Tend's ignore list uses it that way). */
+  onPick?: (folder: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const files = useStore((s) => s.files)
@@ -68,7 +76,8 @@ export function FolderPicker({
 
   const pick = (folder: string): void => {
     onClose()
-    void moveToFolder(path, folder)
+    if (onPick) onPick(folder)
+    else void moveToFolder(path, folder)
   }
 
   const onKeyDown = (e: React.KeyboardEvent): void => {
@@ -93,7 +102,7 @@ export function FolderPicker({
         <input
           ref={inputRef}
           className="palette-input"
-          placeholder={`Move “${name}” to…`}
+          placeholder={placeholder ?? `Move “${name}” to…`}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />

@@ -12,6 +12,7 @@ import {
   scanBlocks,
   shapeNoteResults,
   shapeResults,
+  type FollowStep,
   type QueryBlock,
   type QueryNote,
   type QueryResult
@@ -264,21 +265,89 @@ export class VaultIndex {
     return Object.assign(Object.create(VaultIndex.prototype), this) as VaultIndex
   }
 
-  /** Run a `{{query ...}}` against every block in the vault, applying its
-   *  `sort:` / `limit:` / `group:` directives. */
-  runQuery(raw: string): QueryResult {
+  /**
+   * Walk a `follow:` chain from `host`, returning the notes it reaches.
+   *
+   * Forward hops read the note's own frontmatter link properties; backward hops
+   * read `backlinks`, which is ALREADY keyed by target and carries each link's
+   * `prop` — so "which notes call me their parent?" costs a map lookup, and no
+   * inverse property has to be written to disk to answer it. That is the whole
+   * reason this is cheap enough to be a query directive.
+   *
+   * The host is never in its own results: you asked what the field points at,
+   * not to be told about yourself. A `deep` hop stops when the frontier empties,
+   * so a cycle terminates rather than spinning.
+   */
+  private followFrom(host: string, steps: FollowStep[]): Set<string> {
+    let current = new Set<string>([host])
+    for (const step of steps) {
+      const reached = new Set<string>()
+      let frontier = current
+      do {
+        const next = new Set<string>()
+        for (const from of frontier) {
+          for (const to of this.hop(from, step)) {
+            if (reached.has(to)) continue
+            reached.add(to)
+            next.add(to)
+          }
+        }
+        frontier = next
+      } while (step.deep && frontier.size > 0)
+      current = reached
+    }
+    current.delete(host)
+    return current
+  }
+
+  /** One hop from one note along one field, in one direction. */
+  private hop(from: string, step: FollowStep): string[] {
+    if (step.reverse) {
+      const out: string[] = []
+      for (const bl of this.rawBacklinks(from)) {
+        if (bl.ref.prop?.toLowerCase() === step.field) out.push(bl.sourcePath)
+      }
+      return out
+    }
+    const note = this.notesByPath.get(from)
+    if (!note) return []
+    const out: string[] = []
+    for (const ref of note.links) {
+      if (ref.prop?.toLowerCase() !== step.field) continue
+      const target = this.resolve(parseTarget(ref.raw).page)
+      if (target) out.push(target)
+    }
+    return out
+  }
+
+  /**
+   * Run a `{{query ...}}` against the vault, applying its `sort:` / `limit:` /
+   * `group:` directives. `host` is the note holding the query block — the only
+   * thing `follow:` can start from, so a `follow:` query asked without one
+   * (the sidebar search, the builder's live preview) matches nothing rather than
+   * silently widening to the whole vault.
+   */
+  runQuery(raw: string, host?: string): QueryResult {
     const spec = parseQuery(raw)
-    if (spec.empty) return { spec, blocks: [], notes: null, groups: null, total: 0 }
+    const none = { spec, blocks: [], notes: null, groups: null, total: 0 }
+    if (spec.empty) return none
+    let universe: Iterable<string> = this.notesByPath.keys()
+    if (spec.follow?.length) {
+      if (!host) return none
+      universe = this.followFrom(host, spec.follow)
+    }
     if (spec.scope === 'notes') {
       const rows: QueryNote[] = []
-      for (const [path, note] of this.notesByPath) {
+      for (const path of universe) {
+        const note = this.notesByPath.get(path)
+        if (!note) continue
         const row = this.noteRow(path, note)
         if (matchNote(row, this.texts[path] ?? '', spec)) rows.push(row)
       }
       return shapeNoteResults(rows, spec)
     }
     const out: QueryBlock[] = []
-    for (const path of this.notesByPath.keys()) {
+    for (const path of universe) {
       for (const b of this.blocksFor(path)) if (matchBlock(b, spec)) out.push(b)
     }
     return shapeResults(out, spec)

@@ -431,7 +431,8 @@ mark.tok-mark {
   margin: 2px 0;
 }
 .bl-row.selected {
-  /* See .bl-row[data-color]: colour only, so inline indent guides survive. */
+  /* background-COLOR, not the shorthand: the row's indent guides are background
+     IMAGE layers set inline, and the shorthand would clear them. */
   background-color: color-mix(in srgb, var(--accent) 26%, transparent);
 }
 .bl-row.selected ::selection {

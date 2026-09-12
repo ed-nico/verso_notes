@@ -12,8 +12,6 @@ import { parseVideoUrl, formatTimestamp, videoKey } from '../lib/video'
 import { activePlayerKey, currentTime } from '../lib/videobus'
 import { renderInline } from './InlineMarkdown'
 import { BlockRow, type AcSuggestion, type FindMatch, type RowApi } from './BlockRow'
-import { ColorPalette } from './ColorPalette'
-import type { OptionColor } from '../lib/propColors'
 import { useBlockDrag } from './useBlockDrag'
 import { useFindReplace } from './useFindReplace'
 import type { CaretPos, PendingCaret } from './caret'
@@ -271,13 +269,6 @@ export function BlockEditor({
   const [qb, setQb] = useState<{ id: number; initial: string } | null>(null)
   // Block-level multi-selection (whole bullets, not text within one).
   const [selIds, setSelIds] = useState<Set<number>>(() => new Set())
-  // The row-highlight palette: where it sits, and which rows it will paint.
-  const [colorPop, setColorPop] = useState<{
-    x: number
-    y: number
-    ids: number[]
-    current?: OptionColor
-  } | null>(null)
   const pendingCaret = useRef<PendingCaret | null>(null)
   // Set by ⌘⇧V (paste-as-is): the next paste skips markdown→block parsing and inserts
   // the clipboard text verbatim into the current field.
@@ -1113,38 +1104,19 @@ export function BlockEditor({
     }
   }
 
-  /** Paint (or clear) the highlight on rows. Multi-select paints the lot, so a
-   *  whole section can be marked in one go. */
-  const setRowColor = (ids: number[], color: OptionColor | null): void => {
-    const next = cloneBlocks(blocks)
-    let hit = false
-    for (const b of next) {
-      if (!ids.includes(b.id) || b.type === 'code' || b.type === 'table') continue
-      b.color = color ?? undefined
-      hit = true
-    }
-    if (hit) commit(next, `color:${++opSeq.current}`)
-  }
-
-  /** Right-click a row → the highlight palette. Acts on the whole selection when
-   *  the clicked row is part of it, otherwise on just that row. */
+  /** Right-click a row → corrections for the misspelled word under the pointer.
+   *  The rendered view routes this through the misspelled span's own handler;
+   *  while EDITING there are no spans to click (the text is a textarea), so
+   *  hit-test the pointer against the underline layer's spans, which sit at
+   *  exactly the same coordinates as the words they underline. Anything else
+   *  falls through to the browser's own menu. */
   const onRowContextMenu = (b: Block, e: React.MouseEvent): void => {
     if (b.type === 'code' || b.type === 'table') return
+    if (!spellcheckOn || editingId !== b.id) return
+    const hit = spellSpanAt(b.id, e.clientX, e.clientY)
+    if (!hit) return
     e.preventDefault()
-    // A right-click ON A TYPO is a request to fix the typo, never to recolour the
-    // row. The rendered view routes this through the misspelled span's own
-    // handler; while EDITING there are no spans to click — the text is a
-    // textarea — so hit-test the pointer against the underline layer's spans,
-    // which sit at exactly the same coordinates as the words they underline.
-    if (spellcheckOn && editingId === b.id) {
-      const hit = spellSpanAt(b.id, e.clientX, e.clientY)
-      if (hit) {
-        openSpellMenu(b.id, hit.word, e.clientX, e.clientY, hit.start)
-        return
-      }
-    }
-    const ids = selIds.has(b.id) ? [...selIds] : [b.id]
-    setColorPop({ x: e.clientX, y: e.clientY, ids, current: b.color })
+    openSpellMenu(b.id, hit.word, e.clientX, e.clientY, hit.start)
   }
 
   /** The misspelled word under (x, y) in the editing block, if any. The mirror
@@ -1877,7 +1849,15 @@ export function BlockEditor({
   const renderRich = (b: Block, tableWidths?: number[]): React.ReactNode => {
     // `{{query ...}}` renders a live list of matching blocks.
     const queryM = b.type !== 'code' && b.text.match(/^\{\{query\s+([^}]+)\}\}\s*$/i)
-    if (queryM) return <QueryView raw={queryM[1].trim()} onEdit={() => setQb({ id: b.id, initial: queryM[1].trim() })} />
+    if (queryM)
+      return (
+        // `path` is where a `follow:` chain starts walking from.
+        <QueryView
+          raw={queryM[1].trim()}
+          host={path}
+          onEdit={() => setQb({ id: b.id, initial: queryM[1].trim() })}
+        />
+      )
     const baseM = b.type !== 'code' && b.text.match(/^\{\{base\s+([^}]+)\}\}\s*$/i)
     if (baseM) return <BaseEmbed raw={baseM[1].trim()} />
     // `![[Note]]` alone on a line embeds that note, read-only. An `![[file.png]]`
@@ -2288,19 +2268,6 @@ export function BlockEditor({
         <div
           className="ol-drop-line"
           style={{ top: dropHint.top, left: dropHint.left, width: dropHint.width }}
-        />
-      )}
-      {colorPop && (
-        <ColorPalette
-          x={colorPop.x}
-          y={colorPop.y}
-          current={colorPop.current}
-          count={colorPop.ids.length}
-          onPick={(c) => {
-            setRowColor(colorPop.ids, c)
-            setColorPop(null)
-          }}
-          onClose={() => setColorPop(null)}
         />
       )}
       {entityPop && (

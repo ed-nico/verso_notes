@@ -255,6 +255,9 @@ interface VersoState {
   toggleZen: () => void
   /** Append `- [ ] text` to today's daily note, creating it if today is new. */
   addTaskToToday: (text: string) => Promise<void>
+  /** Folders Tend leaves alone (`.verso/tend.json`), loaded per vault. */
+  tendIgnore: string[]
+  setTendIgnore: (folders: string[]) => void
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
   setReadingWidth: (key: string) => void
@@ -370,6 +373,11 @@ interface VersoState {
   // ---- navigation helpers ----
   navigate: (raw: string, side?: boolean) => Promise<void>
   ensureDailyNote: (iso: string) => Promise<string>
+  /** Show a day without creating it: puts the template text in `texts` only, so
+   *  the editor renders it and the FIRST EDIT is what reaches disk. Viewing the
+   *  journal on a second device must not mint a file — that is how an empty
+   *  template ends up racing a filled-in day through a sync tool. */
+  primeDailyNote: (iso: string) => Promise<void>
 
   // ---- file management ----
   applyFileEvent: (event: FileEvent) => Promise<void>
@@ -504,6 +512,17 @@ export const useStore = create<VersoState>((set, get) => {
     scheduleIndexRebuild()
   }
 
+  /** The text a brand-new daily note starts from: `Templates/Journal.md` (or
+   *  "Journal Template") applied to the date, or '' when the vault has no such
+   *  template. Reads a template; writes nothing. */
+  const dailySeed = async (path: string): Promise<string> => {
+    const tpl = get().files.find(
+      (f) => f.path.startsWith('Templates/') && /^journal( template)?$/i.test(f.name)
+    )
+    if (!tpl) return ''
+    return applyTemplate((await window.verso.readNote(tpl.path))?.text ?? '', basename(path), new Date())
+  }
+
   /** Hand the spellchecker the vault's own proper nouns — note names, aliases and
    *  tags — so it stops underlining the user's vocabulary (see lib/spell). */
   const publishVaultWords = (parsed: Record<string, ParsedNote>): void => {
@@ -523,6 +542,17 @@ export const useStore = create<VersoState>((set, get) => {
   const queueWrite = (p: string, t: string): Promise<void> => {
     const chained = (writeChains.get(p) ?? Promise.resolve()).then(async () => {
       const res = await window.verso.writeNote(p, t)
+      if (res.ok && !get().files.some((f) => f.path === p)) {
+        // Writing a path the app has never seen CREATES the file, but the
+        // watcher's `add` for our own write is echo-suppressed — so without this
+        // the note exists on disk and never appears in the tree. `mtime` is
+        // approximate until the next real read corrects it.
+        set((st) =>
+          st.files.some((f) => f.path === p)
+            ? {}
+            : { files: [...st.files, { path: p, name: basename(p), mtime: Date.now() }] }
+        )
+      }
       if (res.ok && res.conflictPath) {
         // The file changed on disk (sync tool / another app) while this edit was
         // buffered. Our version kept the note's path; theirs was preserved as a
@@ -702,6 +732,11 @@ export const useStore = create<VersoState>((set, get) => {
     const bases = await loadWorkspaceBases()
     if (gen !== loadGen) return
     set({ bases, activeBaseId: bases[0]?.id ?? null })
+    // Per-vault, like the bases above — which folders are reference material is
+    // a fact about the notes, not about this machine.
+    const tendIgnore = await window.verso.readTendIgnore()
+    if (gen !== loadGen) return
+    set({ tendIgnore })
     const canvases = await window.verso.listCanvases()
     if (gen !== loadGen) return
     set({ canvases, activeCanvasPath: canvases[0]?.path ?? null })
@@ -868,6 +903,7 @@ export const useStore = create<VersoState>((set, get) => {
       (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
     readingWidth: localStorage.getItem('verso-reading-width') ?? 'normal',
+    tendIgnore: [],
     indentGuides: (localStorage.getItem('verso-guides') as IndentGuides | null) ?? 'plain',
     spellcheck: localStorage.getItem('verso-spellcheck') !== 'off',
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
@@ -943,6 +979,11 @@ export const useStore = create<VersoState>((set, get) => {
     setSpellcheck: (on) => {
       localStorage.setItem('verso-spellcheck', on ? 'on' : 'off')
       set({ spellcheck: on })
+    },
+
+    setTendIgnore: (tendIgnore) => {
+      void window.verso.writeTendIgnore(tendIgnore)
+      set({ tendIgnore })
     },
 
     setReadingWidth: (readingWidth) => {
@@ -1511,13 +1552,7 @@ export const useStore = create<VersoState>((set, get) => {
       const empty = !(get().texts[path] ?? '').trim()
       // Seed from `Templates/Journal.md` when the day is brand-new or still blank.
       if (!exists || empty) {
-        // Match a `Templates/` note named "Journal" or "Journal Template".
-        const tpl = get().files.find(
-          (f) => f.path.startsWith('Templates/') && /^journal( template)?$/i.test(f.name)
-        )
-        const seed = tpl
-          ? applyTemplate((await window.verso.readNote(tpl.path))?.text ?? '', basename(path), new Date())
-          : ''
+        const seed = await dailySeed(path)
         if (!exists) {
           const created = await window.verso.createNote(path, seed)
           if (created) await get().applyFileEvent({ type: 'add', file: created })
@@ -1526,6 +1561,22 @@ export const useStore = create<VersoState>((set, get) => {
         }
       }
       return path
+    },
+
+    primeDailyNote: async (iso) => {
+      const path = dailyPath(iso)
+      if (get().files.some((f) => f.path === path)) return // already a real note
+      if (get().texts[path] !== undefined) return // already primed
+      const seed = await dailySeed(path)
+      if (!seed) return
+      // Re-check across the await: a watcher `add` or an ensureDailyNote may have
+      // landed while the template was being read.
+      if (get().files.some((f) => f.path === path) || get().texts[path] !== undefined) return
+      // `texts` ONLY, deliberately not `parsed`: an unwritten day must not reach
+      // the index, and so must never show up in search, the graph, backlinks or
+      // Tend. The first keystroke runs the normal edit path, which parses it and
+      // writes it — and `queueWrite` then registers the new file.
+      set({ texts: { ...get().texts, [path]: seed }, textsTick: get().textsTick + 1 })
     },
 
     addTaskToToday: async (text) => {
