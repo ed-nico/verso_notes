@@ -2,8 +2,8 @@ import { create } from 'zustand'
 import type { CanvasMeta, FileEvent, NoteFile, ParsedNote, TemplateFile, Workspace } from '@shared/types'
 import { parseNote } from './lib/parse'
 import { VaultIndex } from './lib/vault'
-import { basename, dirname, pathForNewNote, resolveTarget, rewriteLinks } from './lib/links'
-import { resetSpell } from './lib/spell'
+import { basename, dirname, makeResolver, pathForNewNote, resolveTarget, rewriteLinks } from './lib/links'
+import { resetSpell, setVaultWords } from './lib/spell'
 import { getFrontmatter, parseFrontmatter, replaceFrontmatter } from './lib/frontmatter'
 import { applyTemplate } from './lib/templates'
 import { dailyPath, isValidISO, todayISO } from './lib/dates'
@@ -59,12 +59,44 @@ export type HistEntry =
 /** Selectable UI themes: cool dark (default), warm light ("paper"), and cool light. */
 export type ThemeName = 'dark' | 'paper' | 'light'
 
+/**
+ * Faces offered for the writing area, each shown in itself in Settings.
+ *
+ * Named faces rather than a generic "Serif", because the serifs a system carries
+ * differ enough to be a real choice — Charter sets tight and dark, New York is
+ * the SF companion, Georgia is wide and screen-first. Every stack ends in a
+ * generic family: these are SYSTEM fonts, not web fonts (Verso never loads a
+ * font over the network), so a machine without one has to land somewhere sane.
+ *
+ * `serif` keeps its key and its stack from when it was the only serif — prefs
+ * persist under it and `applyTheme` still reaches for it by name, so renaming
+ * the key would silently retypeset every paper-theme vault.
+ */
 export const EDITOR_FONTS: { key: string; label: string; stack: string }[] = [
   { key: 'sans', label: 'Sans', stack: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Inter, sans-serif" },
-  { key: 'serif', label: 'Serif', stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif" },
+  { key: 'serif', label: 'Iowan', stack: "'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif" },
+  { key: 'charter', label: 'Charter', stack: "Charter, 'Bitstream Charter', 'XCharter', Georgia, serif" },
+  { key: 'new-york', label: 'New York', stack: "'New York', ui-serif, 'Iowan Old Style', Georgia, serif" },
+  { key: 'georgia', label: 'Georgia', stack: "Georgia, 'Nimbus Roman', 'Times New Roman', serif" },
+  { key: 'palatino', label: 'Palatino', stack: "Palatino, 'Palatino Linotype', 'URW Palladio L', Georgia, serif" },
   { key: 'mono', label: 'Mono', stack: 'var(--font-mono)' }
 ]
 export const EDITOR_SIZES = [10, 12, 14, 15, 16, 18, 20]
+
+/**
+ * How wide the writing column runs. A measure, not a pixel count — `normal` is
+ * the width the app has always used, so an existing vault doesn't reflow.
+ *
+ * One variable feeds every centred column (the note, the journal, backlinks),
+ * which previously disagreed with each other at 836 / 800 / 760px — the note and
+ * the backlinks below it visibly failed to line up.
+ */
+export const READING_WIDTHS: { key: string; label: string; css: string }[] = [
+  { key: 'snug', label: 'Snug', css: '640px' },
+  { key: 'normal', label: 'Normal', css: 'calc(760px + 2cm)' },
+  { key: 'wide', label: 'Wide', css: '1040px' },
+  { key: 'full', label: 'Full', css: 'none' }
+]
 
 /** One theme's worth of accent variables (`--accent` / `--accent-dim` / `--link`).
  *  `accentDim` doubles as the selection background (white text sits on it). */
@@ -116,6 +148,9 @@ export const ACCENTS: { key: string; label: string; dark: AccentVars; light: Acc
   }
 ]
 
+/** Indent-guide style for the outliner. */
+export type IndentGuides = 'off' | 'plain' | 'rainbow'
+
 /** A side pane holds a cmd-clicked note or a PDF; any number can be open (splits). */
 export interface SidePane {
   kind: 'note' | 'pdf'
@@ -165,6 +200,14 @@ interface VersoState {
   /** Editor font family key (see EDITOR_FONTS) and base font size in px. */
   editorFont: string
   editorFontSize: number
+  /** Writing-column measure key (see READING_WIDTHS). */
+  readingWidth: string
+  /** Vertical guides down the outliner's indent levels: off, one faint line per
+   *  level, or a colour per depth ("rainbow" — the depth is easier to count when
+   *  the levels differ rather than repeat). */
+  indentGuides: IndentGuides
+  /** Spellcheck on/off. Off means no checking, no underlines, no IPC at all. */
+  spellcheck: boolean
   /** Fetch a pasted URL's page title ("smart titles"). The one feature that makes a
    *  network request on its own — off means the app only loads what notes embed. */
   smartLinkTitles: boolean
@@ -212,8 +255,14 @@ interface VersoState {
   toggleZen: () => void
   /** Append `- [ ] text` to today's daily note, creating it if today is new. */
   addTaskToToday: (text: string) => Promise<void>
+  /** Folders Tend leaves alone (`.verso/tend.json`), loaded per vault. */
+  tendIgnore: string[]
+  setTendIgnore: (folders: string[]) => void
   setEditorFont: (key: string) => void
   setEditorFontSize: (px: number) => void
+  setReadingWidth: (key: string) => void
+  setIndentGuides: (mode: IndentGuides) => void
+  setSpellcheck: (on: boolean) => void
   setSmartLinkTitles: (on: boolean) => void
   setHomeJournal: (on: boolean) => void
   openModal: (modal: Exclude<ModalKind, null>) => void
@@ -324,6 +373,11 @@ interface VersoState {
   // ---- navigation helpers ----
   navigate: (raw: string, side?: boolean) => Promise<void>
   ensureDailyNote: (iso: string) => Promise<string>
+  /** Show a day without creating it: puts the template text in `texts` only, so
+   *  the editor renders it and the FIRST EDIT is what reaches disk. Viewing the
+   *  journal on a second device must not mint a file — that is how an empty
+   *  template ends up racing a filled-in day through a sync tool. */
+  primeDailyNote: (iso: string) => Promise<void>
 
   // ---- file management ----
   applyFileEvent: (event: FileEvent) => Promise<void>
@@ -431,6 +485,7 @@ export const useStore = create<VersoState>((set, get) => {
         parsedChanges: changed(touched),
         index: incremental ?? buildIndex(parsed, texts)
       })
+      publishVaultWords(parsed)
     }, 200)
   }
   // Typing hot path: mutate just the changed note's text in place (cloning a 50k-key
@@ -457,6 +512,29 @@ export const useStore = create<VersoState>((set, get) => {
     scheduleIndexRebuild()
   }
 
+  /** The text a brand-new daily note starts from: `Templates/Journal.md` (or
+   *  "Journal Template") applied to the date, or '' when the vault has no such
+   *  template. Reads a template; writes nothing. */
+  const dailySeed = async (path: string): Promise<string> => {
+    const tpl = get().files.find(
+      (f) => f.path.startsWith('Templates/') && /^journal( template)?$/i.test(f.name)
+    )
+    if (!tpl) return ''
+    return applyTemplate((await window.verso.readNote(tpl.path))?.text ?? '', basename(path), new Date())
+  }
+
+  /** Hand the spellchecker the vault's own proper nouns — note names, aliases and
+   *  tags — so it stops underlining the user's vocabulary (see lib/spell). */
+  const publishVaultWords = (parsed: Record<string, ParsedNote>): void => {
+    const words: string[] = []
+    for (const n of Object.values(parsed)) {
+      words.push(n.name)
+      if (n.aliases) words.push(...n.aliases)
+      words.push(...n.tags)
+    }
+    setVaultWords(words)
+  }
+
   // Per-path write chains: every disk write for a path is appended to that path's
   // chain, so a debounced flush and an immediate write (properties, task toggle)
   // issued mid-flush can never land out of order and clobber each other.
@@ -464,6 +542,17 @@ export const useStore = create<VersoState>((set, get) => {
   const queueWrite = (p: string, t: string): Promise<void> => {
     const chained = (writeChains.get(p) ?? Promise.resolve()).then(async () => {
       const res = await window.verso.writeNote(p, t)
+      if (res.ok && !get().files.some((f) => f.path === p)) {
+        // Writing a path the app has never seen CREATES the file, but the
+        // watcher's `add` for our own write is echo-suppressed — so without this
+        // the note exists on disk and never appears in the tree. `mtime` is
+        // approximate until the next real read corrects it.
+        set((st) =>
+          st.files.some((f) => f.path === p)
+            ? {}
+            : { files: [...st.files, { path: p, name: basename(p), mtime: Date.now() }] }
+        )
+      }
       if (res.ok && res.conflictPath) {
         // The file changed on disk (sync tool / another app) while this edit was
         // buffered. Our version kept the note's path; theirs was preserved as a
@@ -569,6 +658,7 @@ export const useStore = create<VersoState>((set, get) => {
       vaultLoading: false,
       loadedCount: Object.keys(texts).length
     })
+    publishVaultWords(parsed)
   }
 
   /** Load an opened workspace's notes + bases into state, resetting navigation. Shared
@@ -642,6 +732,11 @@ export const useStore = create<VersoState>((set, get) => {
     const bases = await loadWorkspaceBases()
     if (gen !== loadGen) return
     set({ bases, activeBaseId: bases[0]?.id ?? null })
+    // Per-vault, like the bases above — which folders are reference material is
+    // a fact about the notes, not about this machine.
+    const tendIgnore = await window.verso.readTendIgnore()
+    if (gen !== loadGen) return
+    set({ tendIgnore })
     const canvases = await window.verso.listCanvases()
     if (gen !== loadGen) return
     set({ canvases, activeCanvasPath: canvases[0]?.path ?? null })
@@ -807,6 +902,10 @@ export const useStore = create<VersoState>((set, get) => {
       localStorage.getItem('verso-font') ??
       (localStorage.getItem('verso-theme') === 'paper' ? 'serif' : 'sans'),
     editorFontSize: Number(localStorage.getItem('verso-fontsize')) || 16,
+    readingWidth: localStorage.getItem('verso-reading-width') ?? 'normal',
+    tendIgnore: [],
+    indentGuides: (localStorage.getItem('verso-guides') as IndentGuides | null) ?? 'plain',
+    spellcheck: localStorage.getItem('verso-spellcheck') !== 'off',
     smartLinkTitles: localStorage.getItem('verso-smart-titles') !== 'off',
     homeJournal: localStorage.getItem('verso-home') !== 'last',
     dirty: false,
@@ -870,6 +969,26 @@ export const useStore = create<VersoState>((set, get) => {
     setEditorFont: (editorFont) => {
       localStorage.setItem('verso-font', editorFont)
       set({ editorFont })
+    },
+
+    setIndentGuides: (indentGuides) => {
+      localStorage.setItem('verso-guides', indentGuides)
+      set({ indentGuides })
+    },
+
+    setSpellcheck: (on) => {
+      localStorage.setItem('verso-spellcheck', on ? 'on' : 'off')
+      set({ spellcheck: on })
+    },
+
+    setTendIgnore: (tendIgnore) => {
+      void window.verso.writeTendIgnore(tendIgnore)
+      set({ tendIgnore })
+    },
+
+    setReadingWidth: (readingWidth) => {
+      localStorage.setItem('verso-reading-width', readingWidth)
+      set({ readingWidth })
     },
 
     setEditorFontSize: (editorFontSize) => {
@@ -1433,13 +1552,7 @@ export const useStore = create<VersoState>((set, get) => {
       const empty = !(get().texts[path] ?? '').trim()
       // Seed from `Templates/Journal.md` when the day is brand-new or still blank.
       if (!exists || empty) {
-        // Match a `Templates/` note named "Journal" or "Journal Template".
-        const tpl = get().files.find(
-          (f) => f.path.startsWith('Templates/') && /^journal( template)?$/i.test(f.name)
-        )
-        const seed = tpl
-          ? applyTemplate((await window.verso.readNote(tpl.path))?.text ?? '', basename(path), new Date())
-          : ''
+        const seed = await dailySeed(path)
         if (!exists) {
           const created = await window.verso.createNote(path, seed)
           if (created) await get().applyFileEvent({ type: 'add', file: created })
@@ -1448,6 +1561,22 @@ export const useStore = create<VersoState>((set, get) => {
         }
       }
       return path
+    },
+
+    primeDailyNote: async (iso) => {
+      const path = dailyPath(iso)
+      if (get().files.some((f) => f.path === path)) return // already a real note
+      if (get().texts[path] !== undefined) return // already primed
+      const seed = await dailySeed(path)
+      if (!seed) return
+      // Re-check across the await: a watcher `add` or an ensureDailyNote may have
+      // landed while the template was being read.
+      if (get().files.some((f) => f.path === path) || get().texts[path] !== undefined) return
+      // `texts` ONLY, deliberately not `parsed`: an unwritten day must not reach
+      // the index, and so must never show up in search, the graph, backlinks or
+      // Tend. The first keystroke runs the normal edit path, which parses it and
+      // writes it — and `queueWrite` then registers the new file.
+      set({ texts: { ...get().texts, [path]: seed }, textsTick: get().textsTick + 1 })
     },
 
     addTaskToToday: async (text) => {
@@ -1628,31 +1757,39 @@ export const useStore = create<VersoState>((set, get) => {
         // Snapshot AFTER the awaits above so keystrokes typed meanwhile are included.
         const state = get()
         const oldAllPaths = state.files.map((f) => f.path)
+        // One resolver for the whole sweep. Every note in the vault gets scanned
+        // here, and resolving each link against `oldAllPaths` linearly made that
+        // O(notes x links x paths) — 2.4s to move one note in a 4k-note vault.
+        const resolver = makeResolver(oldAllPaths)
         // Compute every rewrite up front. The renamed note's own body may link to
         // itself by its old name, so it's rewritten too.
         const own = state.texts[oldPath] ?? ''
-        const rewrites = new Map<string, string>([[newPath, rewriteLinks(own, oldPath, newPath, oldAllPaths)]])
+        const rewrites = new Map<string, string>([[newPath, rewriteLinks(own, oldPath, newPath, resolver)]])
         for (const [p, t] of Object.entries(state.texts)) {
           if (p === oldPath) continue
-          const rewritten = rewriteLinks(t, oldPath, newPath, oldAllPaths)
+          const rewritten = rewriteLinks(t, oldPath, newPath, resolver)
           if (rewritten !== t) rewrites.set(p, rewritten)
         }
         // An edit buffered during the rename follows the file / gets the rewrite
         // applied, so its eventual flush can't undo what we're about to write.
         if (pending.has(oldPath)) {
-          pending.set(newPath, rewriteLinks(pending.get(oldPath)!, oldPath, newPath, oldAllPaths))
+          pending.set(newPath, rewriteLinks(pending.get(oldPath)!, oldPath, newPath, resolver))
           pending.delete(oldPath)
         }
         for (const p of rewrites.keys()) {
           if (p !== newPath && pending.has(p)) {
-            pending.set(p, rewriteLinks(pending.get(p)!, oldPath, newPath, oldAllPaths))
+            pending.set(p, rewriteLinks(pending.get(p)!, oldPath, newPath, resolver))
           }
         }
-        // Persist the changed files.
-        if (rewrites.get(newPath) !== own) await queueWrite(newPath, rewrites.get(newPath)!)
+        // Persist the changed files. Fired together rather than awaited one by
+        // one: a rename can touch hundreds of referrers, and `queueWrite` already
+        // chains per path, so the ordering that matters is preserved.
+        const writes: Promise<unknown>[] = []
         for (const [p, t] of rewrites) {
-          if (p !== newPath) await queueWrite(p, t)
+          if (p === newPath && t === own) continue // the move alone changed nothing in it
+          writes.push(queueWrite(p, t))
         }
+        await Promise.all(writes)
         // Merge onto the freshest state (watcher events / keystrokes may have landed
         // mid-rename) and reparse only the notes that actually changed.
         set((s) => {
@@ -1677,19 +1814,23 @@ export const useStore = create<VersoState>((set, get) => {
             history: remapHistory(s.history, oldPath, newPath)
           }
         })
-        // Canvas cards point at notes by path — retarget any that referenced the old path.
-        for (const c of get().canvases) {
-          const doc = normalizeDoc(await window.verso.readCanvas(c.path))
-          let changed = false
-          const nodes = doc.nodes.map((n) => {
-            if (n.type === 'file' && n.file === oldPath) {
-              changed = true
-              return { ...n, file: newPath }
-            }
-            return n
+        // Canvas cards point at notes by path — retarget any that referenced the
+        // old one. Read in parallel; most vaults have no canvases at all, and this
+        // is otherwise a round trip per canvas after the UI has already updated.
+        await Promise.all(
+          get().canvases.map(async (c) => {
+            const doc = normalizeDoc(await window.verso.readCanvas(c.path))
+            let hit = false
+            const nodes = doc.nodes.map((n) => {
+              if (n.type === 'file' && n.file === oldPath) {
+                hit = true
+                return { ...n, file: newPath }
+              }
+              return n
+            })
+            if (hit) await window.verso.writeCanvas(c.path, { ...doc, nodes })
           })
-          if (changed) await window.verso.writeCanvas(c.path, { ...doc, nodes })
-        }
+        )
       } catch (e) {
         // The file moved but a referrer-rewrite failed partway through, so memory and
         // disk may now disagree. Re-scan from disk to reconcile to a consistent state.

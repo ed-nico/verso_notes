@@ -31,13 +31,17 @@ const JournalDay = memo(
     const path = dailyPath(iso)
     const openNote = useStore((s) => s.openNote)
     const ensureDailyNote = useStore((s) => s.ensureDailyNote)
+    const primeDailyNote = useStore((s) => s.primeDailyNote)
     const exists = useStore((s) => s.files.some((f) => f.path === path))
     const isToday = iso === today
 
-    // Materialise today's entry from the Journal template the first time it's shown.
+    // Show today's entry seeded from the Journal template — WITHOUT writing it.
+    // Creating it just because the feed was rendered is what let a second device
+    // mint a blank template over a day the first device had already filled in;
+    // the file now appears the moment you actually type into it.
     useEffect(() => {
-      if (isToday && !exists) void ensureDailyNote(iso)
-    }, [isToday, exists, iso, ensureDailyNote])
+      if (isToday && !exists) void primeDailyNote(iso)
+    }, [isToday, exists, iso, primeDailyNote])
 
     return (
       <section className="journal-day">

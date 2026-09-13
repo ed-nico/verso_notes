@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { tendReport } from './tend'
+import { ignoreTest, tendReport } from './tend'
 import { parseNote } from './parse'
 import { resolveTarget, basename } from './links'
 import type { NoteFile, ParsedNote } from '@shared/types'
@@ -117,5 +117,30 @@ describe('broken links', () => {
       'Templates/T.md': '[[Placeholder]]'
     })
     expect(r.broken).toHaveLength(0)
+  })
+})
+
+describe('ignoreTest', () => {
+  it('matches on a folder boundary, not a prefix', () => {
+    const ig = ignoreTest(['Bible'])
+    expect(ig('Bible/Genesis.md')).toBe(true)
+    expect(ig('Bible/01 - Genesis/Genesis.md')).toBe(true)
+    // The bug this guards: a bare startsWith would swallow these two.
+    expect(ig('Bibles.md')).toBe(false)
+    expect(ig('Bible Study.md')).toBe(false)
+  })
+
+  it('tolerates a trailing slash and ignores case', () => {
+    expect(ignoreTest(['Personal/Health/Workouts/'])('personal/health/workouts/Leg day.md')).toBe(true)
+  })
+
+  it('is false for everything when nothing is ignored', () => {
+    const ig = ignoreTest([])
+    expect(ig('Anything.md')).toBe(false)
+  })
+
+  it('drops empty entries rather than ignoring the whole vault', () => {
+    const ig = ignoreTest(['', '   '])
+    expect(ig('Anything.md')).toBe(false)
   })
 })

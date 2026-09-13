@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useStore, templatesFromFiles, EDITOR_FONTS, ACCENTS, type SidePane } from './store'
+import { useStore, templatesFromFiles, EDITOR_FONTS, READING_WIDTHS, ACCENTS, type SidePane } from './store'
 import { todayISO } from './lib/dates'
 import { Sidebar } from './components/Sidebar'
 import { Backlinks } from './components/Backlinks'
@@ -264,6 +264,16 @@ function SideNote({ path, paneIndex }: { path: string; paneIndex: number }): Rea
           </button>
         </div>
       </div>
+      {/* Properties travel with the note, and a split IS a note view. The right
+          panel is hidden whenever a split is open (the window has no room for
+          both), so without this a note opened beside a base — the very place its
+          frontmatter matters most — had nowhere to show or edit it. Collapsible
+          and remembered, like the right panel's own sections. */}
+      <div className="side-note-props">
+        <RightSection id="side-properties" title="Properties">
+          <PropertiesPanel key={path} path={path} />
+        </RightSection>
+      </div>
       <NoteArea path={path} />
     </div>
   )
@@ -395,6 +405,7 @@ export function App(): React.JSX.Element {
   const customCss = useStore((s) => s.customCss)
   const editorFont = useStore((s) => s.editorFont)
   const editorFontSize = useStore((s) => s.editorFontSize)
+  const readingWidth = useStore((s) => s.readingWidth)
   const sidebarWidth = useStore((s) => s.sidebarWidth)
   const rightbarWidth = useStore((s) => s.rightbarWidth)
   const zen = useStore((s) => s.zen)
@@ -441,10 +452,12 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const font = EDITOR_FONTS.find((f) => f.key === editorFont) ?? EDITOR_FONTS[0]
+    const width = READING_WIDTHS.find((w) => w.key === readingWidth) ?? READING_WIDTHS[1]
     const root = document.documentElement
     root.style.setProperty('--font-editor', font.stack)
     root.style.setProperty('--doc-font-size', `${editorFontSize}px`)
-  }, [editorFont, editorFontSize])
+    root.style.setProperty('--doc-width', width.css)
+  }, [editorFont, editorFontSize, readingWidth])
 
   useEffect(() => {
     void bootstrap()

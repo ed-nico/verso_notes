@@ -4,6 +4,7 @@ import {
   dirname,
   parseTarget,
   pathForNewNote,
+  makeResolver,
   resolvePage,
   resolveTarget,
   rewriteLinks,
@@ -105,5 +106,46 @@ describe('rewriteLinks', () => {
   it('does not rewrite inside an unclosed fence', () => {
     const text = '[[Old]]\n```\n[[Old]] never closed'
     expect(rewriteLinks(text, 'Old.md', 'New.md', ['Old.md'])).toBe('[[New]]\n```\n[[Old]] never closed')
+  })
+})
+
+describe('makeResolver', () => {
+  // rewriteLinks swaps the linear resolvePage for this prebuilt one on the rename
+  // path. The swap is only safe while the two agree on every case — precedence,
+  // tie-breaks and all — so pin that here rather than trusting the comment.
+  const paths = [
+    'Note.md',
+    'Folder/Note.md',
+    'Deep/Folder/note.md',
+    'a/Other.md',
+    'Other.md',
+    'Dup.md',
+    'b/Dup.md'
+  ]
+  const pages = [
+    '',
+    'Note',
+    'note',
+    'NOTE',
+    'Folder/Note',
+    'folder/note',
+    'Deep/Folder/note',
+    'Other',
+    'other',
+    'Dup',
+    'dup',
+    'Missing',
+    'No/Such/Path'
+  ]
+
+  it('agrees with resolvePage on every page', () => {
+    const r = makeResolver(paths)
+    for (const page of pages) expect([page, r.resolve(page)]).toEqual([page, resolvePage(page, paths)])
+  })
+
+  it('agrees when the path order is reversed', () => {
+    const rev = [...paths].reverse()
+    const r = makeResolver(rev)
+    for (const page of pages) expect([page, r.resolve(page)]).toEqual([page, resolvePage(page, rev)])
   })
 })

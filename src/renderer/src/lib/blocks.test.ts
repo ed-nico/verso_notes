@@ -13,37 +13,25 @@ describe('parseBlocks / serializeBlocks round trip', () => {
     expect(roundTrip(text)).toBe(text)
   })
 
-  it('preserves row colours on bullets, headings, paragraphs and quotes', () => {
-    const text =
-      '# Title %%color:red%%\n\n- item one %%color:green%%\n- plain item\n\na paragraph %%color:blue%%\n\n> quoted %%color:teal%%\n'
-    expect(roundTrip(text)).toBe(text)
-  })
-
-  it('keeps the colour marker out of the editable text', () => {
+  it('strips a legacy colour marker instead of showing it as text', () => {
+    // The row-highlight feature is gone. The marker is peeled off so a note
+    // written by an older build never shows `%%color:orange%%` in the prose, and
+    // is not written back — the residue clears as notes are edited.
     const { blocks } = parseBlocks('- slept badly %%color:orange%%\n')
     expect(blocks[0].text).toBe('slept badly')
-    expect(blocks[0].color).toBe('orange')
+    expect(roundTrip('- slept badly %%color:orange%%\n')).toBe('- slept badly\n')
   })
 
-  it('carries a colour and an anchor on the same line', () => {
-    const text = '- item %%color:green%% ^abc123\n'
-    const { blocks } = parseBlocks(text)
+  it('strips a legacy marker while keeping the anchor beside it', () => {
+    const { blocks } = parseBlocks('- item %%color:green%% ^abc123\n')
     expect(blocks[0].text).toBe('item')
-    expect(blocks[0].color).toBe('green')
     expect(blocks[0].anchor).toBe('abc123')
-    expect(roundTrip(text)).toBe(text)
-  })
-
-  it('leaves an unknown colour name as ordinary text', () => {
-    const { blocks } = parseBlocks('- item %%color:chartreuse%%\n')
-    expect(blocks[0].color).toBeUndefined()
-    expect(blocks[0].text).toBe('item %%color:chartreuse%%')
+    expect(roundTrip('- item %%color:green%% ^abc123\n')).toBe('- item ^abc123\n')
   })
 
   it('does not treat a code block’s body as a colour marker', () => {
     const text = '```\nconst x = "%%color:red%%"\n```\n'
     expect(roundTrip(text)).toBe(text)
-    expect(parseBlocks(text).blocks[0].color).toBeUndefined()
   })
 
   it('keeps the anchor out of the editable text', () => {

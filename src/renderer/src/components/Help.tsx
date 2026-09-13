@@ -51,7 +51,16 @@ const SECTIONS: Section[] = [
       { k: '# Tags', d: 'Every tag with counts. Give a tag fields and it becomes a typed tag with a table of instances.' },
       { k: '▤ Bases', d: 'Saved table/gallery views over your notes’ frontmatter — a spreadsheet layer on top of the same Markdown.' },
       { k: '◉ Graph', d: 'The whole vault as a force-directed map. Useful for spotting clusters and orphans, not for daily work.' },
-      { k: '❧ Tend', d: 'The gardener’s report: suggested connections, orphans, stubs, stale notes, broken links.' }
+      { k: '❧ Tend', d: 'The gardener’s report: suggested connections, near-duplicates (with a side-by-side compare), orphans, stubs, stale notes, broken links.' }
+    ]
+  },
+  {
+    title: 'Properties & the outline',
+    note: 'Frontmatter is a small database; these are the rules that make it behave like one.',
+    rows: [
+      { k: 'Select options', d: 'Give a property a set of coloured choices once, in any note, and every note with that property inherits the dropdown.' },
+      { k: 'Indent guides', d: 'Settings → Indent guides draws a line down each outline level; Rainbow gives each depth its own colour.' },
+      { k: 'Spelling', d: 'Misspellings are underlined as you write — including inside the block you’re editing. Right-click one for corrections or to add it to the dictionary. Note names, aliases and tags count as known words; code, links, URLs and #tags are never checked. Turn it off in Settings.' }
     ]
   },
   {
@@ -59,7 +68,7 @@ const SECTIONS: Section[] = [
     rows: [
       { k: '⌘K  /  ⌘P', d: 'Command palette — jump to any note (filename or full-text), or run a command.' },
       { k: '⌘D', d: 'Open today’s daily note, creating it from your Journal template if it’s the first time today.' },
-      { k: 'Search box', d: 'Plain words search note titles and body text. Type query syntax instead — #tag, [[link]], before:/after:, prop:key=value, -not, sort:, limit: — and the same box filters the vault with the query language.' },
+      { k: 'Search box', d: 'Plain words search note titles and body text. Type query syntax instead — #tag, [[link]], before:/after:, prop:key=value, -not, sort:, limit:, follow: — and the same box filters the vault with the query language.' },
       { k: '⌘-click', d: 'Open a note or link in a split beside the current one. Repeat for several side by side.' },
       { k: '⤢ on a split', d: 'Expand that split into the main pane (or double-click its header). Back returns to what you were on.' },
       { k: '⌘[ / ⌘]', d: 'Back / forward through where you’ve been.' },
@@ -147,7 +156,10 @@ const SECTIONS: Section[] = [
       { k: 'word', d: 'Contains that text. Multiple words must all appear.' },
       { k: '-#tag  -word', d: 'A leading - excludes.' },
       { k: 'before: / after:', d: 'Filter by note date (YYYY-MM-DD) — a daily note’s day, else its date: property.' },
-      { k: 'prop:key=value', d: 'The note has that frontmatter property (prop:key alone checks it exists).' }
+      { k: 'prop:key=value', d: 'The note has that frontmatter property (prop:key alone checks it exists).' },
+      { k: 'follow:field', d: 'Travel along a frontmatter link property instead of searching the whole vault. Starts at the note holding the query; what it reaches is what the rest of the query filters.' },
+      { k: 'follow:-field', d: 'Walks BACKWARDS — the notes whose field points here. follow:-parent is “my children”, with no inverse property written anywhere.' },
+      { k: 'follow:field*', d: 'Keeps going as far as it goes. follow:parent* is every ancestor; follow:-parent* is the whole subtree. Cycles stop; you never appear in your own results.' }
     ]
   },
   {
@@ -161,6 +173,8 @@ const SECTIONS: Section[] = [
       { k: '{{query #film scope:notes cols:name,Year sort:-Year}}', d: 'Every film as a table, newest first — the same job a Base does.' },
       { k: '{{query #project todo}}', d: 'Open tasks tagged #project.' },
       { k: '{{query #work OR #home}}', d: 'Blocks tagged either.' },
+      { k: '{{query follow:-parent scope:notes}}', d: 'The children of this note — every note naming it as their parent.' },
+      { k: '{{query follow:parent follow:-parent scope:notes}}', d: 'Its siblings: up to the parent, then back down (you are dropped from your own results).' },
       { k: '{{query todo -#someday after:2026-01-01}}', d: 'Open tasks from this year, skipping #someday.' },
       { k: '{{query todo sort:-date limit:10 group:note}}', d: 'Your ten most recent open tasks, by note.' },
       { k: 'tip', d: 'Stack query blocks in one note to build a dashboard. For saved views over properties, use a Base.' }
@@ -189,7 +203,6 @@ const SECTIONS: Section[] = [
       { k: '⌘A ⌘A ⌘A', d: 'Select the block’s text → the block + subtree → the whole view.' },
       { k: '⌥↑ / ⌥↓  ·  ⇧↑ / ⇧↓', d: 'Start a block selection · grow or shrink it.' },
       { k: '⌘⇧↑ / ⌘⇧↓', d: 'Move the block (or selection) up / down.' },
-      { k: 'right-click a row', d: 'Highlight it in one of nine colours — the same palette Select properties use. Works on a whole selection at once.' },
       { k: '⌘C / ⌘X / ⌘V', d: 'Copy / cut / paste whole blocks, across notes too.' },
       { k: '⌘Z / ⌘⇧Z', d: 'Undo / redo edits.' }
     ]

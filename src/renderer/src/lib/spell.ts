@@ -18,9 +18,41 @@ const MIN_LEN = 3
 // Worth checking: letters + internal apostrophes only. Skips numbers, code-ish tokens,
 // and ALL-CAPS acronyms (which a dictionary flags as noise).
 const WORD_RE = /^[A-Za-z][A-Za-z']*$/
+// An internal capital after a lowercase letter means an identifier, not prose:
+// `useState`, `readNotes`, `iPhone`. A dictionary has nothing useful to say about
+// these and flagging them is the fastest way to make people switch spellcheck off.
+const CAMEL_RE = /[a-z][A-Z]/
+
+/**
+ * Words the VAULT already knows: every note name, alias and tag, split into
+ * tokens. A personal vault is full of proper nouns no dictionary carries — place
+ * names, people, projects, transliterations — and the user has already told us
+ * they're words by naming notes after them. This is what stops a PKM app
+ * underlining half of someone's own vocabulary.
+ */
+let vaultWords = new Set<string>()
+
+/** Replace the vault vocabulary (on index rebuild / vault switch). */
+export function setVaultWords(words: Iterable<string>): void {
+  const next = new Set<string>()
+  for (const w of words) {
+    for (const tok of w.split(/[^A-Za-z']+/)) {
+      if (tok.length >= MIN_LEN) next.add(tok.toLowerCase())
+    }
+  }
+  // Only bust the cache when the vocabulary actually changed — this runs on every
+  // index rebuild, and a needless reset re-checks the whole visible note.
+  if (next.size === vaultWords.size && [...next].every((w) => vaultWords.has(w))) return
+  vaultWords = next
+  for (const [w, bad] of cache) if (bad && vaultWords.has(w)) cache.delete(w)
+  notify()
+}
 
 export function spellable(word: string): boolean {
-  return word.length >= MIN_LEN && WORD_RE.test(word) && !/^[A-Z]+$/.test(word)
+  if (word.length < MIN_LEN || !WORD_RE.test(word)) return false
+  if (/^[A-Z]+$/.test(word)) return false // acronym
+  if (CAMEL_RE.test(word)) return false // identifier
+  return !vaultWords.has(word.toLowerCase())
 }
 
 /** Synchronous status: true = misspelled, false = ok, undefined = not checked yet

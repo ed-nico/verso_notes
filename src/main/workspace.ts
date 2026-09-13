@@ -1079,6 +1079,38 @@ export async function readCustomCss(): Promise<string | null> {
   }
 }
 
+/**
+ * Folders Tend should skip (`<root>/.verso/tend.json`).
+ *
+ * Per-vault rather than per-machine: which folders are reference material and
+ * which are garden is a fact about the NOTES — a vault of scripture or workout
+ * logs is full of notes that look alike and link to nothing, and Tend reporting
+ * them forever is what makes the whole page easy to ignore.
+ */
+export async function readTendIgnore(): Promise<string[]> {
+  if (!currentRoot) return []
+  try {
+    const parsed = JSON.parse(await fs.readFile(path.join(currentRoot, '.verso', 'tend.json'), 'utf8'))
+    const list = Array.isArray(parsed) ? parsed : (parsed as { ignore?: unknown })?.ignore
+    return Array.isArray(list) ? list.filter((f): f is string => typeof f === 'string') : []
+  } catch {
+    return [] // no list yet
+  }
+}
+
+export async function writeTendIgnore(folders: string[]): Promise<WriteResult> {
+  if (!currentRoot) return { ok: false, error: 'No workspace open' }
+  try {
+    const dir = path.join(currentRoot, '.verso')
+    await fs.mkdir(dir, { recursive: true })
+    await atomicWrite(path.join(dir, 'tend.json'), JSON.stringify({ ignore: folders }, null, 2))
+    return { ok: true }
+  } catch (e) {
+    logErr('writeTendIgnore', e)
+    return { ok: false, error: errMsg(e) }
+  }
+}
+
 /** The user's per-vault spellcheck ignore list (`<root>/.verso/dictionary.json`). */
 export async function readUserDictionary(): Promise<string[]> {
   if (!currentRoot) return []

@@ -155,6 +155,10 @@ export interface VersoApi {
   writeBases: (data: unknown) => Promise<WriteResult>
   /** Read the vault's custom stylesheet (`.verso/custom.css`), or null if missing / no workspace. */
   readCustomCss: () => Promise<string | null>
+  /** Folders Tend should not look in (`.verso/tend.json`). Per-vault, so the
+   *  choice travels with the notes rather than living on one machine. */
+  readTendIgnore: () => Promise<string[]>
+  writeTendIgnore: (folders: string[]) => Promise<WriteResult>
   getLastWorkspace: () => Promise<string | null>
   /** All vaults the user has opened, most-recent first (for the sidebar switcher). */
   getWorkspaces: () => Promise<string[]>

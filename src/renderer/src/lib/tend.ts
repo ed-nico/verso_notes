@@ -10,6 +10,7 @@ import { parseFrontmatter } from './frontmatter'
 import { codeRanges, escapeRegExp, inRanges } from './md'
 import { basename } from './links'
 import { noteStats } from './stats'
+import { duplicatePairs, type DuplicatePair } from './similar'
 
 /** A note that other notes mention by name without linking to it. */
 export interface Suggestion {
@@ -34,12 +35,26 @@ export interface TendReport {
   /** Untouched for STALE_DAYS+, oldest first. */
   stale: NoteFile[]
   broken: BrokenLink[]
+  /** Pairs of notes that say the same thing (TF-IDF cosine; see similar.ts). */
+  duplicates: DuplicatePair[]
 }
 
 /** Folders whose notes are structural, not garden content (templates, supertag
  *  definitions, journal days) — excluded as targets/orphans/stubs, though a
  *  journal day still counts as a mention *source*. */
 const SKIP_DIRS = /^(Templates|Tags)\//
+
+/** A test for "is this note in a folder the user told Tend to leave alone?".
+ *  Folder paths, matched on a `/` boundary so `Bible` never swallows `Bibles`. */
+export function ignoreTest(folders: string[]): (path: string) => boolean {
+  const clean = folders.map((f) => f.replace(/\/+$/, '')).filter(Boolean)
+  if (!clean.length) return () => false
+  const lower = clean.map((f) => f.toLowerCase() + '/')
+  return (p) => {
+    const lp = p.toLowerCase()
+    return lower.some((f) => lp.startsWith(f))
+  }
+}
 const JOURNAL_DIR = /^Daily\//
 /** Names shorter than this are too ambiguous to suggest linking ("A", "Go"). */
 const MIN_NAME_LEN = 3
@@ -52,9 +67,12 @@ export function tendReport(
   texts: Record<string, string>,
   resolve: (raw: string) => string | null,
   backlinkCount: (path: string) => number,
-  now: number
+  now: number,
+  /** Folders to leave alone entirely (see `ignoreTest`). */
+  ignoreFolders: string[] = []
 ): TendReport {
-  const notes = files.filter((f) => !SKIP_DIRS.test(f.path))
+  const ignored = ignoreTest(ignoreFolders)
+  const notes = files.filter((f) => !SKIP_DIRS.test(f.path) && !ignored(f.path))
 
   // Resolved outgoing note-links per note, for connectivity checks.
   const out = new Map<string, Set<string>>()
@@ -68,7 +86,7 @@ export function tendReport(
   }
   const connected = (a: string, b: string): boolean => !!out.get(a)?.has(b) || !!out.get(b)?.has(a)
 
-  const suggestions = suggestConnections(files, texts, connected)
+  const suggestions = suggestConnections(files, texts, connected, ignored)
 
   const orphans: NoteFile[] = []
   const stubs: NoteFile[] = []
@@ -87,7 +105,7 @@ export function tendReport(
   // day that will be created on click, not a mistake).
   const brokenBy = new Map<string, BrokenLink>()
   for (const f of files) {
-    if (f.path.startsWith('Templates/')) continue // template links are placeholders
+    if (f.path.startsWith('Templates/') || ignored(f.path)) continue // template links are placeholders
     for (const ref of parsed[f.path]?.links ?? []) {
       if (!ref.raw || resolve(ref.raw) !== null) continue
       if (FILE_LINK_RE.test(ref.raw) || /^\d{4}-\d{2}-\d{2}$/.test(ref.raw)) continue
@@ -101,7 +119,14 @@ export function tendReport(
     (a, b) => b.sources.length - a.sources.length || a.raw.localeCompare(b.raw)
   )
 
-  return { suggestions, orphans, stubs, stale, broken }
+  // Near-duplicates. Journal days are excluded: consecutive days legitimately
+  // look alike (same template, same recurring headings) and reporting them would
+  // bury the real finds. Templates are already excluded by the corpus itself.
+  const duplicates = duplicatePairs(texts, {
+    skip: (p) => JOURNAL_DIR.test(p) || SKIP_DIRS.test(p) || ignored(p)
+  })
+
+  return { suggestions, orphans, stubs, stale, broken, duplicates }
 }
 
 /**
@@ -113,12 +138,13 @@ export function tendReport(
 function suggestConnections(
   files: NoteFile[],
   texts: Record<string, string>,
-  connected: (a: string, b: string) => boolean
+  connected: (a: string, b: string) => boolean,
+  ignored: (path: string) => boolean
 ): Suggestion[] {
   // Candidate targets: real content notes with usably distinctive names.
   const byName = new Map<string, NoteFile>() // lowercased name -> note
   for (const f of files) {
-    if (SKIP_DIRS.test(f.path) || JOURNAL_DIR.test(f.path)) continue
+    if (SKIP_DIRS.test(f.path) || JOURNAL_DIR.test(f.path) || ignored(f.path)) continue
     if (f.name.length < MIN_NAME_LEN || /^\d{4}-\d{2}-\d{2}$/.test(f.name)) continue
     const k = f.name.toLowerCase()
     // Duplicate basenames are ambiguous mentions — skip the name entirely.
@@ -135,7 +161,10 @@ function suggestConnections(
 
   const mentions = new Map<string, Set<string>>() // target path -> source paths
   for (const src of files) {
-    if (src.path.startsWith('Templates/')) continue
+    // An ignored folder is neither a target (above) nor a mention SOURCE: being
+    // told to leave a folder alone means not being nagged about its contents in
+    // either direction.
+    if (src.path.startsWith('Templates/') || ignored(src.path)) continue
     const text = texts[src.path] ?? ''
     const { body } = parseFrontmatter(text)
     const skip = codeRanges(body)

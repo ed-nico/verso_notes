@@ -29,7 +29,9 @@ import {
   saveParseCache,
   flushParseCacheNow,
   readUserDictionary,
+  readTendIgnore,
   renameNote,
+  writeTendIgnore,
   resolveAsset,
   revealNote,
   saveAsset,
@@ -619,6 +621,11 @@ function registerIpc(): void {
     addIgnoreWord(word)
     await addUserDictionaryWord(word)
   })
+
+  ipcMain.handle('tend:read-ignore', () => readTendIgnore())
+  ipcMain.handle('tend:write-ignore', (_e, folders: unknown) =>
+    writeTendIgnore(Array.isArray(folders) ? folders.filter(isStr) : [])
+  )
 }
 
 /** Apply a CSP: permissive in dev (Vite needs inline/eval/ws), strict in production.

@@ -485,8 +485,12 @@ body.resizing-col {
 }
 
 .doc {
-  /* ~1cm wider on each side than the original 760px column. */
-  max-width: calc(760px + 2cm);
+  /* The measure, set from Settings (READING_WIDTHS). `normal` is the long-standing
+     width — ~1cm wider on each side than the original 760px column — so the
+     default reflows nothing. Backlinks and the journal read the same variable;
+     they used to be 760px and 800px, and the mismatch showed as a note whose
+     edges didn't line up with the backlinks beneath it. */
+  max-width: var(--doc-width, calc(760px + 2cm));
   margin: 0 auto;
   padding: 32px 48px 80px;
   font-family: var(--font-editor, var(--font-ui));

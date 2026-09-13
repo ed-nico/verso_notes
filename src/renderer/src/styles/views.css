@@ -673,3 +673,31 @@
   margin: 0;
   background: var(--bg-elevated);
 }
+
+/* ---------- Tend: the "not tended" folder list ---------- */
+.tend-ignore {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 20px;
+}
+.tend-ignore-label {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.tend-chip {
+  background: var(--sel-bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.tend-chip:hover {
+  color: var(--text);
+}
+.tend-chip-x {
+  color: var(--text-faint);
+}

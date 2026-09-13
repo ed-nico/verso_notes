@@ -5,6 +5,7 @@ import { searchNotes } from '../lib/search'
 import { isStructuredQuery } from '../lib/query'
 import { supertagsFromParsed } from '../lib/supertags'
 import { ContextMenu, type MenuItem } from './ContextMenu'
+import { FolderPicker } from './FolderPicker'
 import { VaultSwitcher } from './VaultSwitcher'
 import { ResizeHandle } from './ResizeHandle'
 import { NOTE_DND_MIME } from '../lib/canvas'
@@ -129,6 +130,7 @@ export function Sidebar(): React.JSX.Element {
   const deferredQuery = useDeferredValue(query)
   const index = useStore((s) => s.index)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [moving, setMoving] = useState<{ path: string; name: string } | null>(null)
   const [applyMenu, setApplyMenu] = useState<MenuState | null>(null)
   const [folderMenu, setFolderMenu] = useState<MenuState | null>(null)
   const [newMenu, setNewMenu] = useState<{ x: number; y: number } | null>(null)
@@ -165,7 +167,10 @@ export function Sidebar(): React.JSX.Element {
       // only scope that can match a note whose tags live in frontmatter and whose
       // body has no blocks at all. An explicit `scope:` in the text still wins.
       const raw = /(^|\s)scope:/i.test(q) ? q : `${q} scope:notes`
-      const res = index.runQuery(raw)
+      // `follow:` walks out from a note, and in the search box the note you're
+      // looking at is the only sensible place to start — so `follow:-parent` here
+      // reads as "children of this note". Without a host it would match nothing.
+      const res = index.runQuery(raw, activePath ?? undefined)
       const rows = res.notes ?? []
       return rows.slice(0, 200).map((n) => ({
         path: n.path,
@@ -233,6 +238,7 @@ export function Sidebar(): React.JSX.Element {
     const isPinned = pinned.some((f) => f.path === m.path)
     return [
       { label: 'Rename', onClick: () => setRenaming(m.path) },
+      { label: 'Move to folder…', onClick: () => setMoving({ path: m.path, name: m.name }) },
       { label: isPinned ? 'Unpin' : 'Pin to top', onClick: () => void togglePin(m.path) },
       ...(templates.length ? [{ label: '▤ Apply template…', onClick: () => setApplyMenu(m) }] : []),
       { label: 'Duplicate', onClick: () => void duplicateNote(m.path) },
@@ -640,6 +646,9 @@ export function Sidebar(): React.JSX.Element {
 
       {menu && (
         <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu)} onClose={() => setMenu(null)} />
+      )}
+      {moving && (
+        <FolderPicker path={moving.path} name={moving.name} onClose={() => setMoving(null)} />
       )}
       {canvasMenu && (
         <ContextMenu

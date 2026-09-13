@@ -116,17 +116,51 @@ Key invariants and patterns:
   `<root>/.verso/bases.json` (loaded in `bootstrap`/`openWorkspace`, saved by `setBases`), with
   a one-time migration from the old `verso-bases` localStorage key. Don't reintroduce
   localStorage for vault data — it splits between the dev (`localhost`) and packaged (`file://`) origins.
+- **Daily notes are created on first EDIT, not first view.** `ensureDailyNote` writes the file
+  and is for DELIBERATE acts (clicking a date, ⌘D, quick capture); the journal feed calls
+  `primeDailyNote`, which puts the template text in `texts` only — no `parsed` entry, so an
+  unwritten day never reaches the index, search, the graph or Tend, and the first keystroke is
+  what hits disk. Creating on view is how a second device minted a blank template over a day
+  the first device had already filled in, which whole-file sync then surfaced as a conflict.
+  Relatedly, `queueWrite` registers a written path in `files` if it wasn't there: `writeNote`
+  echo-suppresses its own watcher event, so a write to an unseen path would otherwise create a
+  note that never appears in the tree.
 - Navigation is panes, not tabs: a main pane (with back/forward `history`, capped at 200
   steps) plus any number of right-hand splits (`sidePanes: SidePane[]` — cmd-clicked notes /
   open PDFs; `closeSidePane(i?)` closes one, `promoteSidePane(i)` moves a note split into
   the main pane — via `openNote`, so whatever the main pane was showing is one Back away
   rather than being swapped into the split, which a base/journal/graph view couldn't be).
   `view` switches the main pane between the
-  editor and the graph/bases/journal/todos/assets/tags screens.
+  editor and the graph/bases/journal/todos/assets/tags screens. A note split
+  renders its OWN Properties section (`App.tsx`'s `SideNote`): the right panel is
+  hidden whenever a split is open, so a note opened beside a base — where its
+  frontmatter matters most — otherwise had nowhere to show or edit it.
+- Moving a note is `renameNote` with a new directory (`moveToFolder`), reachable by dragging
+  onto a sidebar folder OR via `components/FolderPicker.tsx` (sidebar right-click "Move to
+  folder…" / the palette) — dragging alone doesn't scale past a treeful of folders. The
+  rename rewrites every referrer, so it sweeps the whole vault: keep that sweep cheap (see
+  `links.ts`'s `makeResolver`, and `rewriteLinks`' no-`[[` early exit) and keep the writes
+  parallel — `queueWrite` already chains per path, so awaiting them one at a time only adds
+  round trips.
+- `components/Backlinks.tsx` groups references by source note, each group collapsible, with a
+  **Collapse all / Expand all** button and an auto-collapse above `AUTO_COLLAPSE_GROUPS` (10) —
+  a note with no body of its own can still carry hundreds (one real note has 300), and
+  expanded-with-context they bury the note they belong to. The threshold was measured against
+  the real vault (median 2 groups, p90 3, p95 5, p98 11), so it catches ~1% of notes.
+  A group's open state is DERIVED from that count, not stored, with an `overrides` map for
+  what the reader actually clicked: seeding a collapsed set instead would paint the note at
+  full height for one frame before folding it up. Each section decides independently, so
+  opening the unlinked list can't fold up the linked groups you were reading.
 - Right panel: every block is a `RightSection` (`components/RightSection.tsx`) whose
   open/closed state persists in localStorage. It has to persist — the panels are keyed by
   note path and remount on every navigation, so component state alone forgot the choice
   the moment you opened another note.
+- Spellcheck: `lib/spell.ts` caches per word and batches over IPC to the main-process
+  nspell. `setVaultWords` feeds it every note name, alias and tag on each index rebuild —
+  a personal vault is full of proper nouns no dictionary carries, and the user already
+  declared them words by naming notes after them. `spellable` also drops acronyms and
+  camelCase identifiers. A right-click on a misspelled word always beats the row-colour
+  palette, in both the rendered and editing paths.
 - **`lib/keymap.ts`** is the one table of app shortcuts; Help renders its key sections from
   it and `keymap.test.ts` fails the build if a chord is bound to two different actions in a
   scope. Add a binding there as well as in the handler.
@@ -140,7 +174,13 @@ Key invariants and patterns:
   (`components/QuickTask.tsx`), writing through to disk immediately rather than via the 600ms
   debounce, since capture is used mid-thought and abandoned.
 - Appearance: `theme` (`ThemeName`: dark / paper / light) + `accent` (see `ACCENTS`) live in
-  localStorage; `customCss` mirrors the vault's `.verso/custom.css` and is injected/hot-reloaded
+  localStorage; so do `editorFont` (`EDITOR_FONTS` — named SYSTEM faces, each with a real
+  fallback chain, since Verso never fetches a font; the `serif` KEY is load-bearing, it's what
+  `applyTheme` picks for paper and what existing prefs persist under) and `readingWidth`
+  (`READING_WIDTHS` → the `--doc-width` variable). One variable feeds every centred writing
+  column — `.doc`, `.journal-doc`, `.backlinks` — which used to disagree at 836/800/760px;
+  keep them on it so a note and its backlinks stay flush.
+   `customCss` mirrors the vault's `.verso/custom.css` and is injected/hot-reloaded
   by App.tsx. **Paper is a LIGHT theme** (warm cream, `html[data-theme='paper']` in
   `styles/panels.css`) — anything that branches on lightness must test `theme === 'dark'`, not
   `theme === 'light'`, or paper silently gets the dark treatment (see App.tsx's accent effect
@@ -158,14 +198,25 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   Renders `{{query …}}`/`{{base …}}` blocks as embeds, `---` as `<hr>`, and a trailing
   click-to-write tail. `/template` (and the sidebar right-click "Apply template") merge a
   template's frontmatter + body into the CURRENT note via `applyTemplateToNote`/`insertTemplate`.
-- **`components/BlockRow.tsx`** — one memoized outliner row; a keystroke re-renders only the
-  edited block. Rows read the latest editor closures through a `RowApi` ref and re-render on
+- **`components/BlockRow.tsx`** — one memoized outliner row; indent guides are one
+  background-IMAGE gradient per row (never the `background` shorthand — the selected fill is a
+  background-COLOUR from CSS and the shorthand would clear the guides), so a deep outline costs
+  no extra DOM; a keystroke re-renders only the edited block. Rows read the latest editor closures through a `RowApi` ref and re-render on
   scalar prop changes plus a `dataTick` that bumps when parsed/files/index/spellcheck change.
   If you add a field to `Block`, the row's shallow compare picks it up automatically.
   Non-editing rows carry `.bl-cv` (`content-visibility: auto`) so the browser skips layout
   and paint for offscreen rows while keeping them in the DOM — which drag-reorder, the
   find-scroll, and PDF export all depend on. Never put it on the editing row: the paint
   containment it brings would clip the `[[`/`/` autocomplete popup.
+- **`components/SpellLayer.tsx`** — the spelling underlines behind the block being
+  EDITED. The rendered row gets its squiggles from `renderInline`, but a focused block is
+  a plain `<textarea>` with no spans to mark, which is exactly when you're fixing a typo.
+  The layer mirrors the field's text with identical metrics and paints it fully
+  TRANSPARENT — only `text-decoration` shows (decoration colour is independent of text
+  colour), so drift misplaces a squiggle instead of ghosting the text. That's also the
+  hit-test surface: right-click in a textarea has no element to target, so
+  `spellSpanAt` measures the layer's `.spell-hit` rects to find the word under the
+  pointer. Keep `.spell-layer`'s font/padding/line-height identical to `.ol-input`.
 - **`components/useBlockDrag.ts`** / **`useFindReplace.ts`** — drag-reorder and in-note
   find & replace, extracted from the editor. `useBlockDrag` reads only refs, which is why
   its document listeners subscribe once instead of re-binding per keystroke; keep it that way.
@@ -173,16 +224,13 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   next textarea mounts (it can't be placed at the call site — the element doesn't exist yet).
 - **`lib/blocks.ts`** — block model: parse/serialize markdown ↔ `Block[]`, indentation,
   shortcut detection, visible/foldable logic. The editor's data layer. Round-trips preserve
-  `^block-anchor` markers (`Block.anchor`), row highlights (`Block.color`) and ordered-list
-  numbering (`Block.ordinal`).
+  `^block-anchor` markers (`Block.anchor`) and ordered-list numbering (`Block.ordinal`).
   Consecutive `>` lines fold into ONE `quote` block with the markers stripped (a bare `>` is a
   blank line inside it), so a callout's whole body is a single block.
-  A row's colour rides on the LINE as a trailing `%%color:green%%` (stripped on parse,
-  re-appended on save, just inside any `^anchor`) — deliberately not a frontmatter map keyed
-  by block position, because position isn't identity: inserting a paragraph would repaint
-  every colour below it, and an external edit would drift the whole map. `%%…%%` is
-  Obsidian's comment syntax, so the marker stays invisible there too. Right-click a row for
-  `components/ColorPalette.tsx`; the colours are `propColors`' tokens, shared with Select chips.
+  Row highlights were REMOVED (Eds: the right-click palette was in the way of spellcheck).
+  `COLOR_RE` survives as a one-line strip so a `%%color:green%%` written by an older build
+  never shows as literal text; it is not written back, so the residue clears as notes are
+  edited. Right-clicking a row is now only ever a request to fix the typo under the pointer.
 - **`components/MermaidBlock.tsx`** + **`lib/mermaid.ts`** — a ```` ```mermaid ```` fence
   renders as a diagram instead of code (dispatched from `renderRich`'s `code` branch on
   `Block.lang`). `renderMermaid` is the ONE seam to the engine: it lazy-imports `mermaid`,
@@ -239,7 +287,12 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   second full pass over the vault at startup.
 - **`links.ts`** — wikilink resolution (`resolveTarget`, `pathForNewNote`), path helpers
   (`basename`/`dirname`/`stripMd`), and `rewriteLinks` used when renaming notes (code-aware:
-  skips fenced/inline code via `md.ts`'s shared `codeRanges`).
+  skips fenced/inline code via `md.ts`'s shared `codeRanges`). `resolvePage` scans `allPaths`
+  per call, which suits the UI's one-off "is this link resolved?" checks; a rename is the
+  opposite shape (every note, every link, one unchanging path set) so it passes a prebuilt
+  **`makeResolver`** instead — the linear scan there cost 2.4s to move one note in a 4k-note
+  vault, now ~20ms. The two MUST resolve identically; `links.test.ts` asserts it, and
+  `VaultIndex.resolve` is a third implementation of the same rules plus aliases.
 - **`frontmatter.ts`** — YAML frontmatter get/parse/replace, built on the `yaml` package's
   Document API so edits preserve comments, key order, and formatting of untouched keys.
 - **`query.ts`** — the `{{query ...}}` query language, rendered by `QueryView`. Grammar
@@ -256,6 +309,16 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   term: it's read as a property name, so `sort:-Year` orders by frontmatter (degrading it
   made the query silently search for the literal text "sort:-year").
   `runQuery` returns the shaped `QueryResult` — `blocks` XOR `notes`.
+  **`follow:field`** is the one directive that SELECTS rather than shapes: it replaces the
+  vault-wide candidate set with the notes reached by walking a frontmatter LINK property out
+  from the note holding the query (`runQuery(raw, host)`). `-` reverses the walk, `*` takes the
+  transitive closure, and several chain left to right. Reverse hops read `backlinks`, which is
+  already keyed by target and carries each link's `prop` — which is why `follow:-parent`
+  ("my children") costs a map lookup and needs no inverse property written to disk. That is
+  the whole point: it is the read-time replacement for the bidirectional fields Eds had
+  removed. The host is never in its own results and each note is visited once, so cycles
+  terminate. Because it selects, it alone makes `spec.empty` false, and `matchBlock`/
+  `matchNote` treat "no atom groups" as "everything in the set passes".
 - **`isStructuredQuery`** is the switch behind ONE search box: plain words go to
   `search.ts` (fuzzy name + full text), anything using query syntax goes to the query
   engine (the sidebar appends `scope:notes` unless the text names a scope). Bare
@@ -273,13 +336,25 @@ The README mentions CodeMirror, but the editor is now a bespoke block outliner. 
   `^anchors` stripped, links optionally flattened. Rendered by `CompileView` (the `compile`
   modal, opened from the page ⋯ menu / palette on the active note).
 - **`tend.ts`** — the Tend ("gardener") report: suggested connections (note names co-mentioned
-  without links, one combined-alternation scan), orphans, stubs, stale notes, broken links.
-  Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`).
+  without links, one combined-alternation scan), orphans, stubs, stale notes, broken links,
+  and near-duplicates. Folders the user has excluded (`ignoreTest`, from `.verso/tend.json`
+  via `store.tendIgnore`) are skipped as targets AND as mention sources: reference material —
+  scripture, workout logs, an imported archive — is full of notes that look alike and link to
+  nothing, and reporting them forever is what makes the page not worth opening. The test
+  matches on a `/` boundary, so `Bible` never swallows `Bibles.md`. Rendered by `TendView` (sidebar `❧ Tend`, `view: 'tend'`); a duplicate
+  pair opens `CompareView`, a side-by-side line diff that deliberately WRITES NOTHING —
+  deciding what a duplicate means (keep, merge, link) is the user's, and a wrong auto-merge
+  is unrecoverable.
 - **`bases.ts`** — Base type + filtering helpers (no storage; persistence is the vault file
   above). **`components/BaseView.tsx`** is the shared renderer (table/gallery) used by both the
   Bases page (`BasesView`, interactive) and inline `{{base <name> [limit:N] [layout:…]}}`
   embeds (`BaseEmbed`, read-only). Templates are derived live from the `Templates/` folder
   (`templatesFromFiles`) — there is no `listTemplates` IPC.
+- **`diff.ts` + `similar.ts`'s `duplicatePairs`** — Tend's near-duplicate report. All-pairs
+  cosine is O(n²), so each note proposes only notes sharing one of its heaviest tf-idf terms
+  (an inverted index over the top few) and only those pairs are scored. `duplicatePairs` takes
+  the FULL texts map plus a `skip` predicate — never a pre-filtered map, which would miss
+  `corpusOf`'s identity cache and evict the corpus `similarNotes` is using.
 - **`propColors.ts` + `propSchema.ts`** — coloured Select properties. A Select's options live
   in the hidden `_options` frontmatter map and their colours in the parallel `_colors` one;
   the nine colour names are TOKENS, mapped to `--oc-*` variables per theme in
