@@ -10,6 +10,15 @@ test-vault/
 # and must never reach the public repo, so main ignores it to stop a `git add -A`
 # sweeping it in. HERE it must stay tracked — this branch is where it lives.
 # Merging main will conflict on these lines every time; keep THIS version.
+# Build outputs, though, stay out: a debug APK is a 4MB artifact that changes on
+# every build, and a debug-signed one has no business on a public branch.
+mobile/node_modules/
+mobile/dist/
+mobile/*.apk
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/android/app/src/main/assets/public/
 # Heavy social-media images (not referenced by the app or README)
 branding/x-*.png
 branding/x-*.svg
