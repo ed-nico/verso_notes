@@ -230,8 +230,25 @@ del {
 }
 .bl-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+/* Matches .bl-sort so the row reads as one set of controls. */
+.bl-toggle-all {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bl-toggle-all:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 .bl-filter {
   background: var(--bg);

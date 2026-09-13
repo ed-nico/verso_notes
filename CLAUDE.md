@@ -142,6 +142,15 @@ Key invariants and patterns:
   `links.ts`'s `makeResolver`, and `rewriteLinks`' no-`[[` early exit) and keep the writes
   parallel — `queueWrite` already chains per path, so awaiting them one at a time only adds
   round trips.
+- `components/Backlinks.tsx` groups references by source note, each group collapsible, with a
+  **Collapse all / Expand all** button and an auto-collapse above `AUTO_COLLAPSE_GROUPS` (10) —
+  a note with no body of its own can still carry hundreds (one real note has 300), and
+  expanded-with-context they bury the note they belong to. The threshold was measured against
+  the real vault (median 2 groups, p90 3, p95 5, p98 11), so it catches ~1% of notes.
+  A group's open state is DERIVED from that count, not stored, with an `overrides` map for
+  what the reader actually clicked: seeding a collapsed set instead would paint the note at
+  full height for one frame before folding it up. Each section decides independently, so
+  opening the unlinked list can't fold up the linked groups you were reading.
 - Right panel: every block is a `RightSection` (`components/RightSection.tsx`) whose
   open/closed state persists in localStorage. It has to persist — the panels are keyed by
   note path and remount on every navigation, so component state alone forgot the choice
