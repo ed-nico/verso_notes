@@ -6,9 +6,10 @@ dist/
 .DS_Store
 .claude/
 test-vault/
-# The Android app lives on a local-only `mobile` branch and must never reach the
-# public repo. Ignored here so a `git add -A` on main can't sweep it in.
-mobile/
+# ON MAIN this reads `mobile/`: the Android app lives on this local-only branch
+# and must never reach the public repo, so main ignores it to stop a `git add -A`
+# sweeping it in. HERE it must stay tracked — this branch is where it lives.
+# Merging main will conflict on these lines every time; keep THIS version.
 # Heavy social-media images (not referenced by the app or README)
 branding/x-*.png
 branding/x-*.svg

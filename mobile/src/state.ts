@@ -3,6 +3,7 @@ import type { NoteFile, ParsedNote } from '@shared/types'
 import { makeVaultFS, isNative, normalizeRoot, type VaultFS } from './fs'
 import { dailyPath, todayISO } from '@vlib/dates'
 import { parseNote } from '@vlib/parse'
+import { applyTemplate } from '@vlib/templates'
 import { normalizeBases, type Base } from '@vlib/bases'
 import { VaultIndex } from '@vlib/vault'
 
@@ -62,6 +63,9 @@ interface MobileState {
   saveNote: (path: string, text: string) => Promise<void>
   /** Append a timestamped bullet to today's journal note. */
   captureToJournal: (text: string) => Promise<void>
+  /** The text a brand-new daily note starts from — the vault's Journal template
+   *  applied to the date, or '' when there isn't one. Reads; never writes. */
+  dailySeed: (path: string) => Promise<string>
 }
 
 /**
@@ -202,11 +206,27 @@ export const useApp = create<MobileState>((set, get) => ({
     try {
       await fs.read(path)
     } catch {
-      await fs.write(path, '')
+      // Seeded from the vault's Journal template, exactly as the desktop does.
+      // A day started on the phone used to be an empty file, so the frontmatter
+      // the desktop expects on every day (Sleep, Walk, Exercise…) was missing
+      // until the desktop noticed the note was blank and re-seeded it.
+      await fs.write(path, await get().dailySeed(path))
       await get().refresh()
     }
     set({ drawerOpen: false })
     await get().openNote(path)
+  },
+
+  dailySeed: async (path) => {
+    const { fs, files } = get()
+    const tpl = files.find((f) => f.path.startsWith('Templates/') && /^journal( template)?$/i.test(f.name))
+    if (!fs || !tpl) return ''
+    try {
+      const raw = await fs.read(tpl.path)
+      return applyTemplate(raw, path.replace(/\.md$/i, '').split('/').pop() ?? '', new Date())
+    } catch {
+      return ''
+    }
   },
 
   setDrawer: (drawerOpen) => set({ drawerOpen }),
@@ -236,7 +256,9 @@ export const useApp = create<MobileState>((set, get) => ({
     try {
       cur = await fs.read(path)
     } catch {
-      /* new daily note */
+      // A day captured into before it exists still starts from the template —
+      // otherwise quick capture silently creates a day with no frontmatter.
+      cur = await get().dailySeed(path)
     }
     const now = new Date()
     const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`

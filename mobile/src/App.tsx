@@ -10,6 +10,7 @@ import { FolderPicker } from './fs'
 import { renderInline } from './inline'
 import { Drawer, BaseScreen, TodosScreen, JournalScreen } from './screens'
 import { BlockView, EmbedHost } from './reader'
+import { References } from './refs'
 
 /** First-run screen: point the app at the synced vault folder. */
 function Setup(): React.JSX.Element {
@@ -66,6 +67,7 @@ function List(): React.JSX.Element {
   const parsed = useApp((s) => s.parsed)
   const openNote = useApp((s) => s.openNote)
   const refresh = useApp((s) => s.refresh)
+  const lastNote = useApp((s) => s.stack[s.stack.length - 1])
   const [q, setQ] = useState('')
 
   // ONE search box, two engines — the same split the desktop makes. Plain words
@@ -79,7 +81,10 @@ function List(): React.JSX.Element {
     if (!needle) return files.map((f) => ({ path: f.path, name: f.name, snippet: '' }))
     if (isQuery) {
       const raw = /(^|\s)scope:/i.test(needle) ? needle : `${needle} scope:notes`
-      const rows = vaultIndex(parsed, texts).runQuery(raw).notes ?? []
+      // `follow:` walks out from a note, and the last note you opened is the only
+      // sensible place for the search box to start — so `follow:-parent` here
+      // reads as "children of that note", matching the desktop sidebar.
+      const rows = vaultIndex(parsed, texts).runQuery(raw, lastNote).notes ?? []
       return rows.slice(0, 200).map((n) => ({ path: n.path, name: n.name, snippet: n.excerpt }))
     }
     return searchNotes(needle, files, texts, 80, { parsed }).map((h) => ({
@@ -87,7 +92,7 @@ function List(): React.JSX.Element {
       name: h.name,
       snippet: h.snippet
     }))
-  }, [files, texts, parsed, q, isQuery])
+  }, [files, texts, parsed, q, isQuery, lastNote])
 
   return (
     <div className="screen">
@@ -220,6 +225,7 @@ function Note({ path }: { path: string }): React.JSX.Element {
             ))}
           </EmbedHost>
           {blocks.length === 0 && <div className="empty">Empty note — tap ✎ to write.</div>}
+          <References path={path} />
         </div>
       )}
     </div>

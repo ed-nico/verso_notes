@@ -19,6 +19,8 @@
   --border-strong: color-mix(in srgb, var(--text) 22%, transparent);
   /* Row selection: a tint plus a spine, never a solid accent block. */
   --sel-bg: color-mix(in srgb, var(--accent) 16%, transparent);
+  /* Indent guides: faint enough to read as structure, not as content. */
+  --guide: color-mix(in srgb, var(--text) 11%, transparent);
   --radius-sm: 6px;
   --radius: 9px;
   --radius-lg: 12px;
@@ -277,3 +279,140 @@ hr { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
   color: var(--dim); font: inherit; font-size: 12.5px; font-weight: 600;
 }
 .embed-note { color: var(--faint); font-size: 13px; }
+
+/* ---------- Live {{query}} / {{base}} blocks ---------- */
+/* These used to render as their own literal source text, which on a phone reads
+   as a broken note rather than a feature that isn't there. */
+.qblock {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 12px 0;
+  overflow: hidden;
+}
+.qblock-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+}
+.qblock-q {
+  color: var(--dim);
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qblock-count {
+  color: var(--faint);
+  font-size: 12px;
+  margin-left: auto;
+  flex: none;
+}
+.qblock-empty {
+  color: var(--faint);
+  font-size: 13px;
+  padding: 10px;
+}
+.qblock-row {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: inherit;
+  font: inherit;
+  padding: 9px 10px;
+}
+.qblock-row:last-child {
+  border-bottom: none;
+}
+.qblock-name {
+  color: var(--link);
+  display: block;
+  font-size: 14px;
+}
+.qblock-excerpt {
+  color: var(--faint);
+  display: block;
+  font-size: 12px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- References ---------- */
+.refs {
+  border-top: 1px solid var(--border);
+  margin-top: 28px;
+  padding-top: 14px;
+}
+.refs-section {
+  margin-bottom: 14px;
+}
+.refs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 4px 0;
+}
+.refs-caret {
+  font-size: 9px;
+  padding: 4px;
+}
+.refs-all {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--dim);
+  font-family: inherit;
+  font-size: 12px;
+  margin: 4px 0 8px;
+  padding: 5px 10px;
+}
+.refs-group {
+  margin-bottom: 8px;
+}
+.refs-source {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.refs-name {
+  background: none;
+  border: none;
+  color: var(--link);
+  font-family: inherit;
+  font-size: 14px;
+  padding: 2px 0;
+  text-align: left;
+}
+.refs-count {
+  color: var(--faint);
+  font-size: 12px;
+  margin-left: auto;
+}
+.refs-context {
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 2px 0 2px 22px;
+}
+.refs-empty {
+  color: var(--faint);
+  font-size: 13px;
+  padding: 2px 0 10px;
+}

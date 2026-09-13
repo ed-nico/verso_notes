@@ -5,6 +5,7 @@ import { passesFilter, type Base } from '@vlib/bases'
 import { normTag } from '@vlib/supertags'
 import { dailyDateOf, formatLong, todayISO } from '@vlib/dates'
 import { resolveTarget, pathForNewNote } from '@vlib/links'
+import { baseRows, cellValue } from './baserows'
 import { useApp } from './state'
 import { BlockView } from './reader'
 
@@ -151,28 +152,6 @@ export function Drawer(): React.JSX.Element {
 // ---------------------------------------------------------------------------
 // Bases — rows computed with the desktop lib's filter semantics.
 // ---------------------------------------------------------------------------
-
-function cellValue(n: ParsedNote, key: string): unknown {
-  if (key === 'name') return n.name
-  if (key === 'tags') return n.tags.join(', ')
-  return n.frontmatter[key]
-}
-
-export function baseRows(base: Base, parsed: Record<string, ParsedNote>): ParsedNote[] {
-  let rows = Object.values(parsed)
-  if (base.folder) rows = rows.filter((n) => n.path.startsWith(base.folder))
-  if (base.tag) rows = rows.filter((n) => n.tags.some((t) => normTag(t) === normTag(base.tag)))
-  rows = rows.filter((n) => base.filters.every((f) => passesFilter(cellValue(n, f.key), f)))
-  const dir = base.sortDir === 'desc' ? -1 : 1
-  const key = base.sortKey || 'name'
-  rows.sort((a, b) => {
-    const va = cellValue(a, key)
-    const vb = cellValue(b, key)
-    if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
-    return String(va ?? '').localeCompare(String(vb ?? '')) * dir
-  })
-  return rows
-}
 
 export function BaseScreen({ base }: { base: Base }): React.JSX.Element {
   const parsed = useApp((s) => s.parsed)
